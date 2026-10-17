@@ -1,0 +1,234 @@
+import type { GameScene } from './render/scene';
+
+export interface PlayerIntent {
+  moveX: number; // world space
+  moveY: number;
+  aimX: number; // world space direction, 0,0 for none
+  aimY: number;
+  aimActive: boolean; // show the aim guide
+  superAiming: boolean;
+  fire: boolean;
+  superFire: boolean;
+  autoAim: boolean; // fire at the nearest target instead of aimX/aimY
+}
+
+interface Stick {
+  pointerId: number;
+  originX: number;
+  originY: number;
+  dx: number;
+  dy: number;
+  maxDrag: number;
+  el: HTMLElement;
+  knob: HTMLElement;
+}
+
+const DEADZONE = 18; // px a stick must move before it counts as aiming
+
+/**
+ * Desktop: WASD/arrows to move, mouse to aim, click (hold) to shoot,
+ * hold Space, E or right mouse to aim the super and release to fire it.
+ * Touch: left half is a floating move stick, right half is the attack stick
+ * (drag to aim, release to shoot, tap to auto-aim), plus a super button.
+ */
+export class Input {
+  private keys = new Set<string>();
+  private mouse = { x: 0, y: 0, inside: false, down: false };
+  private superHeld = false;
+  private superReleased = false;
+  private touchMode = false;
+  private moveStick: Stick | null = null;
+  private attackStick: Stick | null = null;
+  private superStick: Stick | null = null;
+  private pendingFire: { dx: number; dy: number; auto: boolean; isSuper: boolean } | null = null;
+
+  constructor(
+    private scene: GameScene,
+    private root: HTMLElement,
+    superButton: HTMLElement,
+  ) {
+    window.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      this.keys.add(e.code);
+      if (e.code === 'Space' || e.code === 'KeyE') {
+        this.superHeld = true;
+        e.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      this.keys.delete(e.code);
+      if ((e.code === 'Space' || e.code === 'KeyE') && this.superHeld) {
+        this.superHeld = false;
+        this.superReleased = true;
+      }
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.mouse.down = false;
+    });
+
+    root.addEventListener('contextmenu', (e) => e.preventDefault());
+    root.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+    window.addEventListener('pointermove', (e) => this.onPointerMove(e));
+    window.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    window.addEventListener('pointercancel', (e) => this.onPointerUp(e));
+    superButton.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse') {
+        this.superReleased = true; // click on desktop fires immediately at the mouse
+        e.stopPropagation();
+        return;
+      }
+      e.stopPropagation();
+      e.preventDefault();
+      this.touchMode = true;
+      this.superStick = this.makeStick(e, false);
+    });
+  }
+
+  setScene(scene: GameScene) {
+    this.scene = scene;
+  }
+
+  get isTouch() {
+    return this.touchMode;
+  }
+
+  /** Gathers this frame's intent. `px, py` is the player position in sim space. */
+  read(px: number, py: number): PlayerIntent {
+    const intent: PlayerIntent = {
+      moveX: 0,
+      moveY: 0,
+      aimX: 0,
+      aimY: 0,
+      aimActive: false,
+      superAiming: false,
+      fire: false,
+      superFire: false,
+      autoAim: false,
+    };
+
+    // Movement.
+    let sx = 0;
+    let sy = 0;
+    if (this.moveStick) {
+      const len = Math.hypot(this.moveStick.dx, this.moveStick.dy);
+      if (len > 6) {
+        const k = Math.min(1, len / this.moveStick.maxDrag) / len;
+        sx = this.moveStick.dx * k;
+        sy = -this.moveStick.dy * k;
+      }
+    } else {
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) sy += 1;
+      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) sy -= 1;
+      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) sx += 1;
+      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) sx -= 1;
+    }
+    const mv = this.scene.screenDirToWorld(sx, sy);
+    intent.moveX = mv.x;
+    intent.moveY = mv.y;
+
+    if (this.touchMode) {
+      const stick = this.superStick ?? this.attackStick;
+      if (stick && Math.hypot(stick.dx, stick.dy) > DEADZONE) {
+        const d = this.scene.screenDirToWorld(stick.dx, -stick.dy);
+        intent.aimX = d.x;
+        intent.aimY = d.y;
+        intent.aimActive = true;
+        intent.superAiming = stick === this.superStick;
+      }
+      if (this.pendingFire) {
+        const f = this.pendingFire;
+        this.pendingFire = null;
+        if (f.auto) intent.autoAim = true;
+        else {
+          const d = this.scene.screenDirToWorld(f.dx, -f.dy);
+          intent.aimX = d.x;
+          intent.aimY = d.y;
+        }
+        if (f.isSuper) intent.superFire = true;
+        else intent.fire = true;
+      }
+    } else if (this.mouse.inside) {
+      const g = this.scene.screenToGround(this.mouse.x, this.mouse.y);
+      intent.aimX = g.x - px;
+      intent.aimY = g.y - py;
+      intent.aimActive = true;
+      intent.superAiming = this.superHeld;
+      intent.fire = this.mouse.down;
+      if (this.superReleased) intent.superFire = true;
+    }
+    this.superReleased = false;
+    return intent;
+  }
+
+  private onPointerDown(e: PointerEvent) {
+    if (e.pointerType === 'mouse') {
+      this.touchMode = false;
+      this.mouse.inside = true;
+      this.mouse.x = e.clientX;
+      this.mouse.y = e.clientY;
+      if (e.button === 0) this.mouse.down = true;
+      if (e.button === 2) this.superHeld = true;
+      return;
+    }
+    e.preventDefault();
+    this.touchMode = true;
+    if (e.clientX < window.innerWidth / 2) {
+      if (!this.moveStick) this.moveStick = this.makeStick(e, true);
+    } else if (!this.attackStick) {
+      this.attackStick = this.makeStick(e, false);
+    }
+  }
+
+  private onPointerMove(e: PointerEvent) {
+    if (e.pointerType === 'mouse') {
+      this.mouse.inside = true;
+      this.mouse.x = e.clientX;
+      this.mouse.y = e.clientY;
+      return;
+    }
+    for (const s of [this.moveStick, this.attackStick, this.superStick]) {
+      if (!s || s.pointerId !== e.pointerId) continue;
+      s.dx = e.clientX - s.originX;
+      s.dy = e.clientY - s.originY;
+      const len = Math.hypot(s.dx, s.dy);
+      const k = len > s.maxDrag ? s.maxDrag / len : 1;
+      s.knob.style.transform = `translate(${s.dx * k}px, ${s.dy * k}px)`;
+    }
+  }
+
+  private onPointerUp(e: PointerEvent) {
+    if (e.pointerType === 'mouse') {
+      if (e.button === 0) this.mouse.down = false;
+      if (e.button === 2 && this.superHeld) {
+        this.superHeld = false;
+        this.superReleased = true;
+      }
+      return;
+    }
+    if (this.moveStick?.pointerId === e.pointerId) {
+      this.moveStick.el.remove();
+      this.moveStick = null;
+    }
+    for (const which of ['attackStick', 'superStick'] as const) {
+      const s = this[which];
+      if (!s || s.pointerId !== e.pointerId) continue;
+      const dragged = Math.hypot(s.dx, s.dy) > DEADZONE;
+      this.pendingFire = { dx: s.dx, dy: s.dy, auto: !dragged, isSuper: which === 'superStick' };
+      s.el.remove();
+      this[which] = null;
+    }
+  }
+
+  private makeStick(e: PointerEvent, isMove: boolean): Stick {
+    const el = document.createElement('div');
+    el.className = `stick ${isMove ? 'stick-move' : 'stick-attack'}`;
+    const knob = document.createElement('div');
+    knob.className = 'stick-knob';
+    el.appendChild(knob);
+    el.style.left = `${e.clientX}px`;
+    el.style.top = `${e.clientY}px`;
+    this.root.appendChild(el);
+    return { pointerId: e.pointerId, originX: e.clientX, originY: e.clientY, dx: 0, dy: 0, maxDrag: 55, el, knob };
+  }
+}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Finger Guns</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Lilita+One&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="hud">
+      <button id="super" aria-label="Super"><span>SUPER</span></button>
+    </div>
+
+    <div id="menu" class="screen">
+      <div class="card">
+        <h1 class="logo"><span>FINGER</span><span>GUNS</span></h1>
+        <p class="tagline">Showdown: last hand standing wins</p>
+        <button class="btn" data-play>PLAY</button>
+        <div class="controls">
+          <div><b>Move</b> WASD or left stick</div>
+          <div><b>Shoot</b> click, or drag and release the right stick (tap to auto-aim)</div>
+          <div><b>Super</b> hold Space, E or right-click and release, or use the yellow button</div>
+          <div><b>Tips</b> break crates for power cubes, hide in bushes, stay out of the gas</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="end" class="screen" hidden>
+      <div class="card">
+        <div class="end-rank">#1</div>
+        <div class="end-sub"></div>
+        <button class="btn" data-play>PLAY AGAIN</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
