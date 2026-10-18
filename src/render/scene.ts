@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BULLET, MAP_SIZE, SUPER } from '../sim/config';
 import { Tile } from '../sim/map';
 import type { Brawler, World } from '../sim/world';
-import { PlayerLook, randomLook } from './cosmetics';
+import type { PlayerLook } from './cosmetics';
 import { FingerLook, HandModel, buildFingerTrophy } from './hand';
 import { Particles } from './particles';
 import {
@@ -58,7 +58,8 @@ export class GameScene {
     readonly renderer: THREE.WebGLRenderer,
     private world: World,
     private playerId: number,
-    playerLook: PlayerLook,
+    private isVisible: (b: Brawler) => boolean,
+    lookOf: (b: Brawler) => PlayerLook,
   ) {
     this.scene.background = new THREE.Color(0x1d2b4f);
 
@@ -85,7 +86,7 @@ export class GameScene {
 
     world.brawlers.forEach((b, i) => {
       const isPlayer = b.id === playerId;
-      const look = isPlayer ? playerLook : randomLook();
+      const look = lookOf(b);
       const sleeve = SLEEVE_COLORS[i % SLEEVE_COLORS.length];
       const hand = new HandModel(sleeve, isPlayer, look.color, look.topper);
       this.looks.set(b.id, { skin: look.color, sleeve });
@@ -185,7 +186,7 @@ export class GameScene {
         hand.die();
       }
       const moving = Math.hypot(b.moveX, b.moveY) > 0.1;
-      const hidden = b.id !== this.playerId && !w.canSee(player, b) && player.alive;
+      const hidden = !this.isVisible(b);
       if (b.alive) {
         hand.setFingerCount(1 + b.extraFingers.length);
         hand.setEffects(w.isShielded(b), w.isRapidFiring(b));

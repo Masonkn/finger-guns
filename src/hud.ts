@@ -1,5 +1,5 @@
 import { ABILITY, AbilityKind, BRAWLER, ZONE } from './sim/config';
-import { World, fingerCount, nextAbility } from './sim/world';
+import { type Brawler, type World, fingerCount, nextAbility } from './sim/world';
 import type { GameScene } from './render/scene';
 
 interface Label {
@@ -33,6 +33,7 @@ export class Hud {
     private playerId: number,
     private superButton: HTMLElement,
     private abilityButton: HTMLElement,
+    private isVisible: (b: Brawler) => boolean,
   ) {
     const top = el('div', 'hud-top');
     this.left = el('div', 'hud-pill');
@@ -98,7 +99,7 @@ export class Hud {
 
     for (const b of w.brawlers) {
       const label = this.labels.get(b.id)!;
-      const visible = b.alive && (b.id === this.playerId || !player.alive || w.canSee(player, b));
+      const visible = b.alive && this.isVisible(b);
       label.el.style.display = visible ? '' : 'none';
       if (!visible) continue;
       const s = this.scene.toScreen(b.x, b.y, 2.05);

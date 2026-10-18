@@ -19,8 +19,23 @@
       <div class="card">
         <h1 class="logo"><span>FINGER</span><span>GUNS</span></h1>
         <p class="tagline">Showdown: last hand standing wins</p>
-        <button class="btn" data-play>PLAY</button>
+        <label class="field">
+          <span>Your name</span>
+          <input id="name" maxlength="14" autocomplete="nickname" spellcheck="false" />
+        </label>
+        <div class="menu-buttons">
+          <button class="btn" id="play-online">PLAY ONLINE</button>
+          <button class="btn btn-alt" id="play-bots">PLAY VS BOTS</button>
+        </div>
         <button class="btn btn-small" id="customize-open" data-customize>CUSTOMIZE</button>
+        <div class="private-row">
+          <button class="btn btn-small" id="create-private">Private match</button>
+          <form id="join-form" class="join-form">
+            <input id="code" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Match code" />
+            <button class="btn btn-small" type="submit">Join</button>
+          </form>
+        </div>
+        <p class="menu-error" id="menu-error" role="alert"></p>
         <div class="controls">
           <div><b>Move</b> WASD or left stick</div>
           <div><b>Shoot</b> click, or drag and release the right stick (tap to auto-aim)</div>
@@ -31,11 +46,31 @@
       </div>
     </div>
 
+    <div id="lobby" class="screen" hidden>
+      <div class="card">
+        <div class="lobby-title" id="lobby-title">Finding players…</div>
+        <div class="lobby-code" id="lobby-code" hidden>
+          <span>Match code</span>
+          <strong id="lobby-code-value"></strong>
+          <button class="btn btn-small" id="copy-link">Copy invite link</button>
+        </div>
+        <div class="lobby-status" id="lobby-status"></div>
+        <ul class="lobby-players" id="lobby-players"></ul>
+        <div class="menu-buttons">
+          <button class="btn" id="lobby-start" hidden>START NOW</button>
+          <button class="btn btn-alt" id="lobby-cancel">LEAVE</button>
+        </div>
+      </div>
+    </div>
+
     <div id="end" class="screen" hidden>
       <div class="card">
         <div class="end-rank">#1</div>
         <div class="end-sub"></div>
-        <button class="btn" data-play>PLAY AGAIN</button>
+        <div class="menu-buttons">
+          <button class="btn" id="play-again">PLAY AGAIN</button>
+          <button class="btn btn-alt" id="to-menu">MENU</button>
+        </div>
         <button class="btn btn-small" data-customize>CUSTOMIZE</button>
       </div>
     </div>

@@ -6,7 +6,7 @@ const STEP = 1 / 60;
 const matches = Number(process.argv[2] ?? 5);
 for (let m = 0; m < matches; m++) {
   const names = Array.from({ length: 10 }, (_, i) => `Bot${i}`);
-  const world = new World(1000 + m * 7919, names);
+  const world = new World(1000 + m * 7919, names.map((name) => ({ name, isBot: true })));
   const brain = new BotBrain(world);
   let shots = 0;
   let crates = 0;
