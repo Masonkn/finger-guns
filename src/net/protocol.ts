@@ -24,7 +24,7 @@ export type ClientMessage =
   | { t: 'join'; name: string; look?: WireLook; mode: 'create'; teamSize?: TeamSize; difficulty?: BotDifficulty } // new private match with a code
   | { t: 'join'; name: string; look?: WireLook; mode: 'code'; code: string } // join a friend's private match
   | { t: 'start' } // host starts a private match
-  | { t: 'mode'; teamSize: TeamSize } // host picks solo or a team size for a private match
+  | { t: 'mode'; teamSize: TeamSize } // longest-waiting player picks solo or a team size
   | { t: 'difficulty'; level: BotDifficulty } // the longest-waiting player picks how well the bots play
   | { t: 'team'; team: number } // move to another team in the lobby
   // q: use the current kill-streak ability
@@ -99,6 +99,7 @@ export type ServerMessage =
       startsIn: number | null; // public matches start on a timer
       canStart: boolean; // you are the host of a private match
       canSetDifficulty: boolean; // you have been in the lobby longest
+      canSetMode: boolean; // same: the longest-waiting player picks solo or a team size
     }
   | {
       t: 'start';

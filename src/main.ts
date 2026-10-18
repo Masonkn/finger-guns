@@ -233,7 +233,7 @@ function renderServerLobby(msg: LobbyMessage, status?: string) {
     canStart: msg.canStart,
     startLabel: 'START NOW',
     // Public lobbies are split by mode, so picking one moves you to that queue.
-    canPickMode: msg.code === null || msg.canStart,
+    canPickMode: msg.canSetMode && !status,
     canPickTeam: msg.teamSize > 1 && !status,
     difficulty: msg.difficulty,
     canPickDifficulty: msg.canSetDifficulty && !status,
@@ -264,7 +264,7 @@ function renderLobby(v: LobbyView) {
     );
     const leader = v.players[0];
     $('#difficulty-note').textContent =
-      v.canPickDifficulty || !leader || leader.isYou ? '' : `${leader.name} picks how well the bots play`;
+      v.canPickDifficulty || !leader || leader.isYou ? '' : `${leader.name} picks the mode and how well the bots play`;
   }
 
   $('#lobby-modes').replaceChildren(
@@ -336,12 +336,9 @@ function pickTeamSize(size: TeamSize) {
   if (lobbyMode.kind === 'bots') {
     saveTeamSize(size);
     renderBotsLobby();
-  } else if (lastLobby?.code) {
-    if (lastLobby.teamSize !== size) conn?.send({ t: 'mode', teamSize: size });
+  } else if (lastLobby && lastLobby.teamSize !== size) {
+    conn?.send({ t: 'mode', teamSize: size });
     saveTeamSize(size);
-  } else if (size !== lastLobby?.teamSize) {
-    saveTeamSize(size);
-    void playOnline({ kind: 'quick' });
   }
 }
 
@@ -362,6 +359,7 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
       startsIn: null,
       canStart: false,
       canSetDifficulty: false,
+      canSetMode: false,
     },
     'Connecting…',
   );
