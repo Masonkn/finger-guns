@@ -1,7 +1,7 @@
 import type { WebSocket } from 'ws';
-import { PLAYER_COUNT } from '../src/sim/config';
+import { PLAYER_COUNT, TeamSize, teamCount } from '../src/sim/config';
 import { BotBrain } from '../src/sim/bot';
-import { Command, PlayerSlot, World } from '../src/sim/world';
+import { Command, PlayerSlot, World, winnerLabel } from '../src/sim/world';
 import {
   BrawlerState,
   ClientMessage,
@@ -20,7 +20,7 @@ const PUBLIC_LOBBY_WAIT = 12; // seconds a public lobby waits for more players
 const RESULTS_LINGER = 6; // seconds a finished match stays open
 const MAX_QUEUED_INPUTS = 8;
 const MAX_MOVE_CREDIT = 4;
-const BOT_NAMES = ['Knuckles', 'Pinky', 'Thumbs', 'Lefty', 'Digit', 'Palmer', 'Pointer', 'Mitts', 'Ringo', 'Wristy'];
+const BOT_NAMES = ['Knuckles', 'Pinky', 'Thumbs', 'Lefty', 'Digit', 'Palmer', 'Pointer', 'Mitts', 'Ringo', 'Wristy', 'Nails', 'Pal'];
 
 type InputMessage = Extract<ClientMessage, { t: 'input' }>;
 
@@ -29,6 +29,7 @@ export interface Client {
   name: string;
   look: WireLook | null;
   room: Room | null;
+  team: number; // lobby team, 0-based
   brawlerId: number | null;
   inputs: InputMessage[];
   last: InputMessage | null;
@@ -52,7 +53,13 @@ export class Room {
   constructor(
     readonly id: string,
     readonly code: string | null, // null for public matchmaking rooms
+    public teamSize: TeamSize = 1,
   ) {}
+
+  /** Whoever has been in the lobby longest picks the mode and starts a private match. */
+  get host(): Client | null {
+    return this.isPrivate ? (this.clients[0] ?? null) : null;
+  }
 
   get isPrivate() {
     return this.code !== null;
@@ -79,6 +86,7 @@ export class Room {
     client.ackSeq = 0;
     client.moveCredit = 0;
     client.resultSent = false;
+    client.team = this.openTeam(-1);
     this.clients.push(client);
     if (this.isFull) this.startMatch();
     else this.broadcastLobby();
@@ -96,7 +104,35 @@ export class Room {
   }
 
   requestStart(client: Client) {
-    if (this.state === 'lobby' && this.isPrivate && this.clients.includes(client)) this.startMatch();
+    if (this.state === 'lobby' && client === this.host) this.startMatch();
+  }
+
+  /** Host switches between solo and teams of 2-4. */
+  setTeamSize(client: Client, size: TeamSize) {
+    if (this.state !== 'lobby' || client !== this.host || size === this.teamSize) return;
+    this.teamSize = size;
+    // Re-seat in join order, so friends fill the same team first; they can still swap after.
+    for (const c of this.clients) c.team = -1;
+    for (const c of this.clients) c.team = this.openTeam(-1);
+    this.broadcastLobby();
+  }
+
+  setTeam(client: Client, team: number) {
+    if (this.state !== 'lobby' || !this.clients.includes(client)) return;
+    if (!Number.isInteger(team) || team < 0 || team >= teamCount(this.teamSize)) return;
+    if (this.membersOf(team) >= this.teamSize) return;
+    client.team = team;
+    this.broadcastLobby();
+  }
+
+  private membersOf(team: number): number {
+    return this.clients.filter((c) => c.team === team).length;
+  }
+
+  /** First team with a free seat, so players fill teams together rather than spreading out. */
+  private openTeam(fallback: number): number {
+    for (let t = 0; t < teamCount(this.teamSize); t++) if (this.membersOf(t) < this.teamSize) return t;
+    return fallback;
   }
 
   queueInput(client: Client, msg: InputMessage) {
@@ -128,37 +164,53 @@ export class Room {
   private broadcastLobby() {
     this.lastLobbyBroadcast = Math.floor(this.lobbyClock);
     const startsIn = this.isPrivate ? null : Math.max(0, Math.ceil(PUBLIC_LOBBY_WAIT - this.lobbyClock));
+    const host = this.host;
     for (const c of this.clients) {
-      const players: LobbyPlayer[] = this.clients.map((o) => ({ name: o.name, isYou: o === c }));
-      send(c.ws, { t: 'lobby', code: this.code, players, startsIn, canStart: this.isPrivate });
+      const players: LobbyPlayer[] = this.clients.map((o) => ({
+        name: o.name,
+        isYou: o === c,
+        isHost: o === host,
+        team: o.team,
+      }));
+      send(c.ws, { t: 'lobby', code: this.code, teamSize: this.teamSize, players, startsIn, canStart: c === host });
     }
   }
 
   private startMatch() {
     if (this.state !== 'lobby') return;
-    const slots: { slot: PlayerSlot; client: Client | null }[] = this.clients.map((c) => ({
-      slot: { name: c.name, isBot: false },
-      client: c,
-    }));
+    const size = this.teamSize;
+    // Seat everyone team by team (the world spawns teammates together), bots in the empty seats.
+    // Teams are shuffled so the same lobby team doesn't always start in the same spot.
     const botNames = shuffle(BOT_NAMES);
-    while (slots.length < PLAYER_COUNT) {
-      slots.push({ slot: { name: botNames[slots.length % botNames.length], isBot: true }, client: null });
-    }
-    const order = shuffle(slots); // so friends don't always spawn side by side
+    let botIndex = 0;
+    const teamOrder = shuffle([...Array(teamCount(size)).keys()]);
+    const seats: { slot: PlayerSlot; client: Client | null }[] = [];
+    teamOrder.forEach((lobbyTeam, team) => {
+      const members = shuffle(this.clients.filter((c) => c.team === lobbyTeam));
+      for (let i = 0; i < size; i++) {
+        const c = members[i];
+        if (c) seats.push({ slot: { name: c.name, isBot: false, team }, client: c });
+        else seats.push({ slot: { name: botNames[botIndex++ % botNames.length], isBot: true, team }, client: null });
+      }
+    });
     const seed = Math.floor(Math.random() * 1e9);
     this.world = new World(
       seed,
-      order.map((o) => o.slot),
+      seats.map((o) => o.slot),
+      size,
     );
     this.bots = new BotBrain(this.world);
-    order.forEach((o, i) => {
+    seats.forEach((o, i) => {
       if (o.client) o.client.brawlerId = this.world!.brawlers[i].id;
     });
     this.state = 'playing';
-    const looks = new Map<number, WireLook | null>();
-    order.forEach((o, i) => looks.set(this.world!.brawlers[i].id, o.client?.look ?? null));
-    const players = this.world.brawlers.map((b) => ({ id: b.id, name: b.name, look: looks.get(b.id) ?? null }));
-    for (const c of this.clients) send(c.ws, { t: 'start', seed, you: c.brawlerId!, players });
+    const players = this.world.brawlers.map((b, i) => ({
+      id: b.id,
+      name: b.name,
+      team: b.team,
+      look: seats[i].client?.look ?? null,
+    }));
+    for (const c of this.clients) send(c.ws, { t: 'start', seed, you: c.brawlerId!, teamSize: size, players });
   }
 
   private step() {
@@ -214,10 +266,9 @@ export class Room {
     for (const c of this.clients) {
       if (c.resultSent || c.brawlerId === null) continue;
       const me = world.brawlers.find((b) => b.id === c.brawlerId)!;
-      if (me.alive && world.winnerId === null) continue;
+      if (me.rank === 0) continue; // your team is still in it
       c.resultSent = true;
-      const winner = world.brawlers.find((b) => b.id === world.winnerId);
-      send(c.ws, { t: 'result', rank: me.rank, kills: me.kills, cubes: me.cubes, winner: winner?.name ?? null });
+      send(c.ws, { t: 'result', rank: me.rank, kills: me.kills, cubes: me.cubes, winner: winnerLabel(world) });
     }
     if (world.winnerId !== null) this.state = 'ended';
   }
@@ -225,14 +276,15 @@ export class Room {
   private sendSnapshot(c: Client, events: Snapshot['ev']) {
     const world = this.world!;
     const me = world.brawlers.find((b) => b.id === c.brawlerId);
-    const spectating = !me || !me.alive;
+    // Teammates share what they see; once your whole team is out you can watch everything.
+    const spectating = !me || !world.isTeamAlive(me.team);
     const b: BrawlerState[] = [];
     const alive: number[] = [];
     for (const o of world.brawlers) {
       if (!o.alive) continue;
       alive.push(o.id);
       // Hidden enemies are never sent, so a modified client can't see into bushes.
-      if (!spectating && o !== me && !world.canSee(me!, o)) continue;
+      if (!spectating && !world.teamCanSee(me!.team, o)) continue;
       const s: BrawlerState = {
         id: o.id,
         x: round(o.x, 3),

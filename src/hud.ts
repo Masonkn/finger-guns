@@ -44,9 +44,11 @@ export class Hud {
     this.banner = el('div', 'hud-banner');
     root.append(top, this.banner);
 
+    const me = world.brawlers.find((b) => b.id === playerId)!;
     for (const b of world.brawlers) {
       const isPlayer = b.id === playerId;
-      const plate = el('div', `plate ${isPlayer ? 'plate-me' : 'plate-enemy'}`);
+      const role = isPlayer ? 'plate-me' : b.team === me.team ? 'plate-ally' : 'plate-enemy';
+      const plate = el('div', `plate ${role}`);
       const name = el('div', 'plate-name');
       name.textContent = b.name;
       const streak = el('span', 'plate-streak');
@@ -118,7 +120,8 @@ export class Hud {
       }
     }
 
-    this.left.innerHTML = `<span class="hud-icon">✋</span> ${w.aliveCount} left`;
+    const left = w.teamSize > 1 ? `${w.aliveTeamCount} teams left` : `${w.aliveCount} left`;
+    this.left.innerHTML = `<span class="hud-icon">✋</span> ${left}`;
     this.cubes.innerHTML = `<span class="hud-icon hud-cube">◆</span> ${player.cubes}`;
     const fingers = fingerCount(player);
     this.fingers.style.display = fingers > 1 ? '' : 'none';
@@ -128,7 +131,8 @@ export class Hud {
 
     const closing = w.time > ZONE.startDelay;
     const untilClose = Math.ceil(ZONE.startDelay - w.time);
-    if (!player.alive || w.winnerId !== null) this.banner.textContent = '';
+    if (w.winnerId !== null) this.banner.textContent = '';
+    else if (!player.alive) this.banner.textContent = w.isTeamAlive(player.team) ? 'Knocked out! Your team fights on…' : '';
     else if (this.flash && this.time < this.flash.until) this.banner.textContent = this.flash.text;
     else if (!closing && untilClose <= 5) this.banner.textContent = `Poison gas in ${untilClose}…`;
     else if (closing && w.time - ZONE.startDelay < 3) this.banner.textContent = 'The gas is closing in!';

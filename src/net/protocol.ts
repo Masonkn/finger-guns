@@ -1,6 +1,7 @@
 // Messages between the browser and the game server, sent as JSON over a WebSocket.
 // Shared by both sides so they can't drift apart.
 
+import type { TeamSize } from '../sim/config';
 import type { GameEvent } from '../sim/world';
 
 export const TICK_RATE = 30; // server simulation and snapshot rate, per second
@@ -17,10 +18,12 @@ export interface WireLook {
 }
 
 export type ClientMessage =
-  | { t: 'join'; name: string; look?: WireLook; mode: 'quick' } // matchmaking into a public match
-  | { t: 'join'; name: string; look?: WireLook; mode: 'create' } // new private match with a code
+  | { t: 'join'; name: string; look?: WireLook; mode: 'quick'; teamSize?: TeamSize } // matchmaking into a public match
+  | { t: 'join'; name: string; look?: WireLook; mode: 'create'; teamSize?: TeamSize } // new private match with a code
   | { t: 'join'; name: string; look?: WireLook; mode: 'code'; code: string } // join a friend's private match
-  | { t: 'start' } // start a private match early
+  | { t: 'start' } // host starts a private match
+  | { t: 'mode'; teamSize: TeamSize } // host picks solo or a team size for a private match
+  | { t: 'team'; team: number } // move to another team in the lobby
   // q: use the current kill-streak ability
   | { t: 'input'; seq: number; mx: number; my: number; ax: number; ay: number; f: 0 | 1; s: 0 | 1; q?: 0 | 1 }
   | { t: 'leave' };
@@ -30,6 +33,8 @@ export type ClientMessage =
 export interface LobbyPlayer {
   name: string;
   isYou: boolean;
+  isHost: boolean;
+  team: number;
 }
 
 /** A brawler as one client sees it. Own brawler carries extra private fields. */
@@ -82,8 +87,21 @@ export interface Snapshot {
 }
 
 export type ServerMessage =
-  | { t: 'lobby'; code: string | null; players: LobbyPlayer[]; startsIn: number | null; canStart: boolean }
-  | { t: 'start'; seed: number; you: number; players: { id: number; name: string; look: WireLook | null }[] }
+  | {
+      t: 'lobby';
+      code: string | null;
+      teamSize: TeamSize;
+      players: LobbyPlayer[];
+      startsIn: number | null; // public matches start on a timer
+      canStart: boolean; // you are the host of a private match
+    }
+  | {
+      t: 'start';
+      seed: number;
+      you: number;
+      teamSize: TeamSize;
+      players: { id: number; name: string; team: number; look: WireLook | null }[];
+    }
   | Snapshot
   | { t: 'result'; rank: number; kills: number; cubes: number; winner: string | null }
   | { t: 'error'; message: string };

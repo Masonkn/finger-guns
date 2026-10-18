@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { ClientMessage, ROOM_CODE_LENGTH, TICK, cleanLook, cleanName } from '../src/net/protocol';
+import { TeamSize, isTeamSize } from '../src/sim/config';
 import { Client, Room, send } from './room';
 
 // One process serves the built game (dist/) and runs every match over WebSockets at /ws.
@@ -63,6 +64,7 @@ wss.on('connection', (ws) => {
     name: '',
     look: null,
     room: null,
+    team: 0,
     brawlerId: null,
     inputs: [],
     last: null,
@@ -108,6 +110,12 @@ function handle(client: Client, msg: ClientMessage) {
     case 'start':
       client.room?.requestStart(client);
       break;
+    case 'mode':
+      if (isTeamSize(msg.teamSize)) client.room?.setTeamSize(client, msg.teamSize);
+      break;
+    case 'team':
+      client.room?.setTeam(client, Number(msg.team));
+      break;
     case 'input':
       client.room?.queueInput(client, {
         t: 'input',
@@ -137,13 +145,17 @@ function findRoom(client: Client, msg: Extract<ClientMessage, { t: 'join' }>): R
     else return room;
     return null;
   }
-  if (msg.mode === 'create') return createRoom(newCode());
-  const open = [...rooms.values()].find((r) => !r.isPrivate && r.state === 'lobby' && !r.isFull);
-  return open ?? createRoom(null);
+  const teamSize: TeamSize = isTeamSize(msg.teamSize) ? msg.teamSize : 1;
+  if (msg.mode === 'create') return createRoom(newCode(), teamSize);
+  // Public matches are kept apart by mode, so a solo player never lands in a squads lobby.
+  const open = [...rooms.values()].find(
+    (r) => !r.isPrivate && r.state === 'lobby' && !r.isFull && r.teamSize === teamSize,
+  );
+  return open ?? createRoom(null, teamSize);
 }
 
-function createRoom(code: string | null): Room {
-  const room = new Room(String(nextRoomId++), code);
+function createRoom(code: string | null, teamSize: TeamSize): Room {
+  const room = new Room(String(nextRoomId++), code, teamSize);
   rooms.set(room.id, room);
   return room;
 }

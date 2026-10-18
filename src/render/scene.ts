@@ -85,10 +85,11 @@ export class GameScene {
     this.scene.add(this.particles.mesh);
 
     world.brawlers.forEach((b, i) => {
-      const isPlayer = b.id === playerId;
+      const me = world.brawlers.find((o) => o.id === playerId)!;
+      const role = b.id === playerId ? 'me' : b.team === me.team ? 'ally' : 'enemy';
       const look = lookOf(b);
       const sleeve = SLEEVE_COLORS[i % SLEEVE_COLORS.length];
-      const hand = new HandModel(sleeve, isPlayer, look.color, look.topper);
+      const hand = new HandModel(sleeve, role, look.color, look.topper);
       this.looks.set(b.id, { skin: look.color, sleeve });
       this.hands.set(b.id, hand);
       this.scene.add(hand.root);
@@ -175,8 +176,10 @@ export class GameScene {
     const player = w.brawlers.find((b) => b.id === this.playerId)!;
     this.handleEvents(player);
 
-    // Follow the player (or whoever is still fighting once they're out).
-    const follow = player.alive ? player : (w.brawlers.find((b) => b.alive) ?? player);
+    // Follow the player, then a teammate once they're out, then whoever is still fighting.
+    const follow = player.alive
+      ? player
+      : (w.brawlers.find((b) => b.alive && b.team === player.team) ?? w.brawlers.find((b) => b.alive) ?? player);
     this.camTarget.lerp(new THREE.Vector3(follow.x, 0, follow.y), Math.min(1, dt * 6));
     this.placeCamera();
 

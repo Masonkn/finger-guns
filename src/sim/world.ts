@@ -13,6 +13,7 @@ import {
   RAPID_FIRE_SHOT_COOLDOWN,
   STREAK,
   SUPER,
+  TeamSize,
   ZONE,
 } from './config';
 import { GameMap, Tile, generateMap, tileAt } from './map';
@@ -33,6 +34,7 @@ export interface Command {
 export interface PlayerSlot {
   name: string;
   isBot: boolean;
+  team: number; // 0-based; hands on the same team can't hurt each other
 }
 
 export interface Point {
@@ -44,6 +46,7 @@ export interface Brawler {
   id: number;
   name: string;
   isBot: boolean;
+  team: number;
   x: number;
   y: number;
   moveX: number;
@@ -58,7 +61,7 @@ export interface Brawler {
   cubes: number;
   alive: boolean;
   inBush: boolean;
-  rank: number;
+  rank: number; // final placing of this hand's team, 0 while the team is still in
   kills: number;
   streak: number; // knockouts since this brawler last died
   /** Extra fingers beyond the index finger, each the id of the brawler it was taken from. */
@@ -76,6 +79,7 @@ export interface Brawler {
 export interface Bullet {
   id: number;
   ownerId: number;
+  team: number; // the shooter's team; bullets pass through teammates
   x: number;
   y: number;
   dx: number;
@@ -126,6 +130,13 @@ export type GameEvent =
   | { type: 'ability'; brawlerId: number; ability: AbilityKind }
   | { type: 'abilityUnlock'; brawlerId: number; ability: AbilityKind };
 
+/** Who won, for the results screen: a name, or a team's names. Null until decided. */
+export function winnerLabel(world: World): string | null {
+  if (world.winnerTeam === null) return null;
+  const names = world.brawlers.filter((b) => b.team === world.winnerTeam).map((b) => b.name);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}` : names[0];
+}
+
 /** Number of fingers on a brawler's gun, which is also bullets per normal shot. */
 export function fingerCount(b: Brawler): number {
   return 1 + b.extraFingers.length;
@@ -169,24 +180,34 @@ export class World {
   fingers: FingerDrop[] = [];
   events: GameEvent[] = [];
   zoneHalfSize = MAP_SIZE / 2;
+  /** Set when one team is left: a surviving hand of the winning team, and that team. */
   winnerId: number | null = null;
+  winnerTeam: number | null = null;
   private nextId = 1;
   private crateGrid: Int32Array; // tile index -> crate id, 0 when none
 
-  constructor(seed: number, players: PlayerSlot[]) {
-    this.map = generateMap(seed);
+  constructor(
+    seed: number,
+    players: PlayerSlot[],
+    readonly teamSize: TeamSize = 1,
+  ) {
+    this.map = generateMap(seed, teamSize);
     this.crateGrid = new Int32Array(this.map.size * this.map.size);
     for (const t of this.map.crateTiles) {
       const crate: Crate = { id: this.nextId++, x: t.x, y: t.y, hp: CRATE.hp, alive: true };
       this.crates.push(crate);
       this.crateGrid[t.y * this.map.size + t.x] = crate.id;
     }
-    players.forEach((p, i) => {
-      const s = this.map.spawns[i];
+    const placed = new Map<number, number>(); // team -> hands spawned so far
+    for (const p of players) {
+      const n = placed.get(p.team) ?? 0;
+      placed.set(p.team, n + 1);
+      const s = this.map.spawns[p.team * teamSize + n];
       this.brawlers.push({
         id: this.nextId++,
         name: p.name,
         isBot: p.isBot,
+        team: p.team,
         x: s.x,
         y: s.y,
         moveX: 0,
@@ -214,13 +235,24 @@ export class World {
         shieldUntil: 0,
         rapidUntil: 0,
       });
-    });
+    }
   }
 
   get aliveCount(): number {
     let n = 0;
     for (const b of this.brawlers) if (b.alive) n++;
     return n;
+  }
+
+  /** Teams with at least one hand still standing. */
+  get aliveTeamCount(): number {
+    const teams = new Set<number>();
+    for (const b of this.brawlers) if (b.alive) teams.add(b.team);
+    return teams.size;
+  }
+
+  isTeamAlive(team: number): boolean {
+    return this.brawlers.some((b) => b.alive && b.team === team);
   }
 
   /** True for walls and unbroken crates: anything that blocks movement and bullets. */
@@ -237,10 +269,19 @@ export class World {
 
   /** Whether `viewer` can currently see `target` (bushes hide brawlers unless close or shooting). */
   canSee(viewer: Brawler, target: Brawler): boolean {
-    if (viewer.id === target.id) return true;
+    if (viewer.team === target.team) return true;
     if (!target.inBush) return true;
     if (this.time - target.lastShotAt < 0.6) return true;
     return Math.hypot(viewer.x - target.x, viewer.y - target.y) < BRAWLER.bushRevealDistance;
+  }
+
+  /** Whether anyone standing on `team` can see `target`: teammates share what they spot. */
+  teamCanSee(team: number, target: Brawler): boolean {
+    if (target.team === team) return true;
+    for (const b of this.brawlers) {
+      if (b.alive && b.team === team && this.canSee(b, target)) return true;
+    }
+    return false;
   }
 
   /** Straight-line visibility check that walls and crates block. */
@@ -295,11 +336,13 @@ export class World {
     this.updateCubes();
     this.updateFingers();
 
-    if (this.aliveCount <= 1) {
-      const winner = this.brawlers.find((b) => b.alive);
+    if (this.aliveTeamCount <= 1) {
+      // Nobody standing means the last team went down this very step; it placed first.
+      const winner = this.brawlers.find((b) => b.alive) ?? this.brawlers.find((b) => b.rank === 1);
       if (winner) {
-        winner.rank = 1;
+        for (const b of this.brawlers) if (b.team === winner.team) b.rank = 1;
         this.winnerId = winner.id;
+        this.winnerTeam = winner.team;
       }
     }
   }
@@ -459,6 +502,7 @@ export class World {
     this.bullets.push({
       id: this.nextId++,
       ownerId: b.id,
+      team: b.team,
       x: b.x + dx * (BRAWLER.radius + 0.1),
       y: b.y + dy * (BRAWLER.radius + 0.1),
       dx,
@@ -517,7 +561,7 @@ export class World {
     }
     const owner = this.brawlers.find((b) => b.id === bullet.ownerId);
     for (const b of this.brawlers) {
-      if (!b.alive || b.id === bullet.ownerId) continue;
+      if (!b.alive || b.team === bullet.team) continue;
       if (Math.hypot(b.x - bullet.x, b.y - bullet.y) > BRAWLER.radius + BULLET.radius) continue;
       bullet.alive = false;
       b.lastCombatAt = this.time;
@@ -562,7 +606,11 @@ export class World {
     if (b.hp > 0) return;
     b.hp = 0;
     b.alive = false;
-    b.rank = this.aliveCount + 1;
+    // A team places when its last hand goes down.
+    if (!this.isTeamAlive(b.team)) {
+      const rank = this.aliveTeamCount + 1;
+      for (const o of this.brawlers) if (o.team === b.team) o.rank = rank;
+    }
     b.streak = 0;
     if (attacker) this.rewardKill(attacker);
     // Drop collected cubes (at least one) for whoever wins the fight.

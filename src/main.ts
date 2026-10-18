@@ -7,8 +7,8 @@ import { CustomizePanel } from './customize';
 import { loadLook } from './render/cosmetics';
 import { Connection } from './net/connection';
 import { OnlineMatch } from './net/online';
-import { BULLET, PLAYER_COUNT, SUPER } from './sim/config';
-import { cleanName, type ServerMessage } from './net/protocol';
+import { BULLET, PLAYER_COUNT, SUPER, TEAM_MODE_NAMES, TEAM_SIZES, TeamSize, isTeamSize, teamCount } from './sim/config';
+import { type LobbyPlayer, type ServerMessage, cleanName } from './net/protocol';
 import { GameScene, createRenderer } from './render/scene';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -17,7 +17,8 @@ const canvas = $<HTMLCanvasElement>('#game');
 const hudRoot = $('#hud');
 const superButton = $('#super');
 const abilityButton = $('#ability');
-const screens = { menu: $('#menu'), lobby: $('#lobby'), end: $('#end') };
+const quitButton = $('#quit');
+const screens = { menu: $('#menu'), lobby: $('#lobby'), quit: $('#quit-confirm'), end: $('#end') };
 const nameInput = $<HTMLInputElement>('#name');
 const codeInput = $<HTMLInputElement>('#code');
 const menuError = $('#menu-error');
@@ -81,6 +82,8 @@ function show(screen: keyof typeof screens | null) {
 function showMenu(error = '') {
   stopMatch();
   disconnect();
+  lobbyMode = null;
+  lastLobby = null;
   menuError.textContent = error;
   show('menu');
 }
@@ -91,6 +94,7 @@ function stopMatch() {
   running.hud.destroy();
   running.scene.dispose();
   running = null;
+  quitButton.style.display = 'none';
 }
 
 function disconnect() {
@@ -106,9 +110,177 @@ function beginMatch(match: Match, mode: Mode) {
   else input.setScene(scene);
   const hud = new Hud(hudRoot, match.world, scene, match.playerId, superButton, abilityButton, visible);
   running = { match, scene, hud, mode, overAt: null };
+  lobbyMode = null;
+  lastLobby = null;
+  quitButton.style.display = 'block';
   show(null);
   // ?debug exposes the running match for poking at from the console (and from tests).
   if (new URLSearchParams(location.search).has('debug')) (window as unknown as { fg: Running }).fg = running;
+}
+
+// --- Lobby ------------------------------------------------------------------
+
+// Everyone passes through the lobby before a match: pick solo or a team size, see who's in.
+let teamSize: TeamSize = loadTeamSize();
+let lobbyMode: Mode | null = null; // the lobby on screen, if any
+let lastLobby: LobbyMessage | null = null;
+
+type LobbyMessage = Extract<ServerMessage, { t: 'lobby' }>;
+
+function loadTeamSize(): TeamSize {
+  try {
+    const n = Number(localStorage.getItem('fg-team-size'));
+    return isTeamSize(n) ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function saveTeamSize(size: TeamSize) {
+  teamSize = size;
+  try {
+    localStorage.setItem('fg-team-size', String(size));
+  } catch {
+    // Not remembered in private mode.
+  }
+}
+
+interface LobbyView {
+  title: string;
+  code: string | null;
+  teamSize: TeamSize;
+  players: LobbyPlayer[];
+  status: string;
+  canStart: boolean;
+  startLabel: string;
+  canPickMode: boolean;
+  canPickTeam: boolean;
+}
+
+function openBotsLobby() {
+  stopMatch();
+  disconnect();
+  lobbyMode = { kind: 'bots' };
+  renderBotsLobby();
+  show('lobby');
+}
+
+function renderBotsLobby() {
+  renderLobby({
+    title: 'Vs bots',
+    code: null,
+    teamSize,
+    players: [{ name: currentName(), isYou: true, isHost: true, team: 0 }],
+    status: teamSize > 1 ? 'Bots fill your team and every other spot' : `You vs ${PLAYER_COUNT - 1} bots`,
+    canStart: true,
+    startLabel: 'START',
+    canPickMode: true,
+    canPickTeam: false,
+  });
+}
+
+function renderServerLobby(msg: LobbyMessage, status?: string) {
+  lastLobby = msg;
+  const humans = msg.players.length;
+  const host = msg.players.find((p) => p.isHost);
+  let line: string;
+  if (status) line = status;
+  else if (msg.startsIn !== null) line = `${humans}/${PLAYER_COUNT} players · starting in ${msg.startsIn}s · bots fill empty spots`;
+  else if (msg.canStart) line = `${humans}/${PLAYER_COUNT} players · start when everyone's in · bots fill empty spots`;
+  else line = `${humans}/${PLAYER_COUNT} players · waiting for ${host?.name ?? 'the host'} to start`;
+  renderLobby({
+    title: msg.code ? 'Private match' : 'Finding players…',
+    code: msg.code,
+    teamSize: msg.teamSize,
+    players: msg.players,
+    status: line,
+    canStart: msg.canStart,
+    startLabel: 'START NOW',
+    // Public lobbies are split by mode, so picking one moves you to that queue.
+    canPickMode: msg.code === null || msg.canStart,
+    canPickTeam: msg.teamSize > 1 && !status,
+  });
+}
+
+function renderLobby(v: LobbyView) {
+  $('#lobby-title').textContent = v.title;
+  $('#lobby-code').hidden = !v.code;
+  $('#lobby-code-value').textContent = v.code ?? '';
+  const start = $('#lobby-start');
+  start.hidden = !v.canStart;
+  start.textContent = v.startLabel;
+  $('#lobby-status').textContent = v.status;
+
+  $('#lobby-modes').replaceChildren(
+    ...TEAM_SIZES.map((size) => {
+      const b = document.createElement('button');
+      b.className = `mode-chip${size === v.teamSize ? ' mode-on' : ''}`;
+      b.textContent = TEAM_MODE_NAMES[size];
+      b.title = size === 1 ? 'Every hand for itself' : `Teams of ${size}`;
+      b.disabled = !v.canPickMode && size !== v.teamSize;
+      b.setAttribute('aria-pressed', String(size === v.teamSize));
+      b.addEventListener('click', () => pickTeamSize(size));
+      return b;
+    }),
+  );
+
+  const nameRow = (p: LobbyPlayer | undefined) => {
+    const li = document.createElement('li');
+    if (!p) {
+      li.textContent = 'Bot';
+      li.className = 'empty';
+      return li;
+    }
+    li.textContent = `${p.name}${p.isYou ? ' (you)' : ''}${p.isHost ? ' ★' : ''}`;
+    if (p.isYou) li.className = 'you';
+    return li;
+  };
+
+  const box = $('#lobby-teams');
+  if (v.teamSize === 1) {
+    const list = document.createElement('ul');
+    list.className = 'lobby-players';
+    for (let i = 0; i < PLAYER_COUNT; i++) list.append(nameRow(v.players[i]));
+    box.replaceChildren(list);
+    return;
+  }
+  const me = v.players.find((p) => p.isYou);
+  const cards: HTMLElement[] = [];
+  for (let t = 0; t < teamCount(v.teamSize); t++) {
+    const members = v.players.filter((p) => p.team === t);
+    const card = document.createElement('div');
+    card.className = `lobby-team${me?.team === t ? ' lobby-team-mine' : ''}`;
+    const head = document.createElement('div');
+    head.className = 'lobby-team-name';
+    head.textContent = `Team ${t + 1}`;
+    const list = document.createElement('ul');
+    for (let i = 0; i < v.teamSize; i++) list.append(nameRow(members[i]));
+    card.append(head, list);
+    if (v.canPickTeam && me && me.team !== t && members.length < v.teamSize) {
+      card.classList.add('lobby-team-open');
+      card.tabIndex = 0;
+      card.title = 'Join this team';
+      const join = () => conn?.send({ t: 'team', team: t });
+      card.addEventListener('click', join);
+      card.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && join());
+    }
+    cards.push(card);
+  }
+  box.replaceChildren(...cards);
+}
+
+function pickTeamSize(size: TeamSize) {
+  if (!lobbyMode) return;
+  if (lobbyMode.kind === 'bots') {
+    saveTeamSize(size);
+    renderBotsLobby();
+  } else if (lastLobby?.code) {
+    if (lastLobby.teamSize !== size) conn?.send({ t: 'mode', teamSize: size });
+    saveTeamSize(size);
+  } else if (size !== lastLobby?.teamSize) {
+    saveTeamSize(size);
+    void playOnline({ kind: 'quick' });
+  }
 }
 
 // --- Online -----------------------------------------------------------------
@@ -116,8 +288,19 @@ function beginMatch(match: Match, mode: Mode) {
 async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
   stopMatch();
   disconnect();
+  lobbyMode = mode;
   const name = currentName();
-  renderLobby({ t: 'lobby', code: null, players: [{ name, isYou: true }], startsIn: null, canStart: false }, 'Connecting…');
+  renderServerLobby(
+    {
+      t: 'lobby',
+      code: null,
+      teamSize,
+      players: [{ name, isYou: true, isHost: false, team: 0 }],
+      startsIn: null,
+      canStart: false,
+    },
+    'Connecting…',
+  );
   show('lobby');
   const c = new Connection();
   conn = c;
@@ -137,13 +320,13 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
   };
   const look = { color: playerLook.color, topper: playerLook.topper };
   if (mode.kind === 'code') c.send({ t: 'join', name, look, mode: 'code', code: mode.code });
-  else c.send({ t: 'join', name, look, mode: mode.kind });
+  else c.send({ t: 'join', name, look, mode: mode.kind, teamSize });
 }
 
 function onServerMessage(c: Connection, msg: ServerMessage, mode: Mode) {
   switch (msg.t) {
     case 'lobby':
-      renderLobby(msg);
+      renderServerLobby(msg);
       break;
     case 'start':
       // Joining by code once puts you in that room; a rematch should make a new one.
@@ -157,29 +340,10 @@ function onServerMessage(c: Connection, msg: ServerMessage, mode: Mode) {
   }
 }
 
-function renderLobby(msg: Extract<ServerMessage, { t: 'lobby' }>, status?: string) {
-  $('#lobby-title').textContent = msg.code ? 'Private match' : 'Finding players…';
-  $('#lobby-code').hidden = !msg.code;
-  $('#lobby-code-value').textContent = msg.code ?? '';
-  $('#lobby-start').hidden = !msg.canStart;
-  const humans = msg.players.length;
-  $('#lobby-status').textContent =
-    status ??
-    (msg.startsIn !== null
-      ? `${humans}/${PLAYER_COUNT} players · starting in ${msg.startsIn}s · bots fill empty spots`
-      : `${humans}/${PLAYER_COUNT} players · start when everyone's in · bots fill empty spots`);
-  const list = $('#lobby-players');
-  list.replaceChildren(
-    ...msg.players.map((p) => {
-      const li = document.createElement('li');
-      li.textContent = p.isYou ? `${p.name} (you)` : p.name;
-      if (p.isYou) li.className = 'you';
-      return li;
-    }),
-  );
-}
-
-$('#lobby-start').addEventListener('click', () => conn?.send({ t: 'start' }));
+$('#lobby-start').addEventListener('click', () => {
+  if (lobbyMode?.kind === 'bots') startBotsMatch();
+  else conn?.send({ t: 'start' });
+});
 $('#lobby-cancel').addEventListener('click', () => showMenu());
 $('#copy-link').addEventListener('click', async (e) => {
   const button = e.currentTarget as HTMLButtonElement;
@@ -194,15 +358,42 @@ $('#copy-link').addEventListener('click', async (e) => {
   setTimeout(() => (button.textContent = 'Copy invite link'), 2500);
 });
 
+// --- Quitting mid-match -----------------------------------------------------
+
+function openQuitConfirm() {
+  if (!running || !screens.end.hidden || !customizeRoot.hidden) return;
+  $('#quit-note').textContent =
+    running.match instanceof OnlineMatch
+      ? 'A bot will take over your hand for the rest of the match.'
+      : 'This match will end and you go back to the menu.';
+  show('quit');
+}
+
+function closeQuitConfirm() {
+  if (!screens.quit.hidden) show(null);
+}
+
+quitButton.addEventListener('pointerdown', (e) => e.stopPropagation()); // don't shoot through it
+quitButton.addEventListener('click', openQuitConfirm);
+$('#quit-yes').addEventListener('click', () => showMenu());
+$('#quit-no').addEventListener('click', closeQuitConfirm);
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.repeat) return;
+  if (!screens.quit.hidden) closeQuitConfirm();
+  else if (running && screens.end.hidden) openQuitConfirm();
+});
+
 // --- Menu buttons -----------------------------------------------------------
 
+function startBotsMatch() {
+  disconnect();
+  lobbyMode = null;
+  beginMatch(new LocalMatch(currentName(), playerLook, teamSize), { kind: 'bots' });
+}
+
 function startMode(mode: Mode) {
-  if (mode.kind === 'bots') {
-    disconnect();
-    beginMatch(new LocalMatch(currentName(), playerLook), mode);
-  } else {
-    void playOnline(mode);
-  }
+  if (mode.kind === 'bots') openBotsLobby();
+  else void playOnline(mode);
 }
 
 $('#play-online').addEventListener('click', () => startMode({ kind: 'quick' }));
@@ -217,7 +408,12 @@ $('#join-form').addEventListener('submit', (e) => {
   }
   startMode({ kind: 'code', code });
 });
-$('#play-again').addEventListener('click', () => running && startMode(running.mode));
+// Vs bots goes straight into another match with the same teams; online goes back to a lobby.
+$('#play-again').addEventListener('click', () => {
+  if (!running) return;
+  if (running.mode.kind === 'bots') startBotsMatch();
+  else startMode(running.mode);
+});
 $('#to-menu').addEventListener('click', () => showMenu());
 
 // --- Frame loop -------------------------------------------------------------
@@ -286,6 +482,7 @@ function frame(now: number) {
     const stats = `${result.kills} knockout${result.kills === 1 ? '' : 's'} · ${result.cubes} power cube${result.cubes === 1 ? '' : 's'}`;
     const winner = result.rank !== 1 && result.winner ? ` · ${result.winner} won` : '';
     $('.end-sub').textContent = stats + winner;
+    quitButton.style.display = 'none';
     show('end');
   }
 }
