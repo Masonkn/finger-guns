@@ -122,3 +122,73 @@ export const BOT_SKILL: Record<
   2: { aimError: [0.12, 0.3], lead: 0.7, fireDelay: 1, thinkInterval: 0.25, engageDistance: [6, 9], usesSuper: true, usesAbilities: true },
   3: { aimError: [0.05, 0.14], lead: 0.95, fireDelay: 0.75, thinkInterval: 0.15, engageDistance: [7.5, 9.5], usesSuper: true, usesAbilities: true },
 };
+
+// --- Bullet types ------------------------------------------------------------
+
+/** What a finger gun shoots. Everyone starts on normal; ammo pickups swap it for a while. */
+export type AmmoKind = 'normal' | 'shotgun' | 'fire' | 'ice' | 'bouncy' | 'sniper';
+/** Wire order: snapshots send a kind as its index here, so only ever add to the end. */
+export const AMMO_KINDS: AmmoKind[] = ['normal', 'shotgun', 'fire', 'ice', 'bouncy', 'sniper'];
+export const PICKUP_AMMO_KINDS = AMMO_KINDS.filter((k) => k !== 'normal');
+
+export function isAmmoKind(k: unknown): k is AmmoKind {
+  return typeof k === 'string' && (AMMO_KINDS as string[]).includes(k);
+}
+
+export interface AmmoStats {
+  name: string;
+  blurb: string; // shown when you pick it up
+  icon: string;
+  color: number;
+  /** Bullets per shot with one finger, and how many each extra finger adds. */
+  pellets: number;
+  pelletsPerFinger: number;
+  spread: number; // radians of extra fan width on top of the finger spread
+  speed: number;
+  range: number;
+  damage: number; // multiplies a normal shot's total damage, split across its bullets
+  cooldown: number; // seconds between shots
+  bounces: number; // times a bullet bounces off walls before it stops
+}
+
+export const AMMO: Record<AmmoKind, AmmoStats> = {
+  normal: {
+    name: 'Normal', blurb: '', icon: '☝️', color: 0xfff27a,
+    pellets: 1, pelletsPerFinger: 1, spread: 0, speed: BULLET.speed, range: BULLET.range, damage: 1, cooldown: BRAWLER.shotCooldown, bounces: 0,
+  },
+  shotgun: {
+    name: 'Shotgun', blurb: 'Big spray, best up close', icon: '💥', color: 0xffffff,
+    pellets: 5, pelletsPerFinger: 2, spread: 0.15, speed: 16, range: 5, damage: 1.6, cooldown: 0.35, bounces: 0,
+  },
+  fire: {
+    name: 'Fire', blurb: 'Sets hands on fire', icon: '🔥', color: 0xff6a1f,
+    pellets: 1, pelletsPerFinger: 1, spread: 0, speed: 15, range: 8, damage: 0.75, cooldown: BRAWLER.shotCooldown, bounces: 0,
+  },
+  ice: {
+    name: 'Ice', blurb: 'Freezes hands so they slow down', icon: '❄️', color: 0x8fe8ff,
+    pellets: 1, pelletsPerFinger: 1, spread: 0, speed: 15, range: 8.5, damage: 0.85, cooldown: BRAWLER.shotCooldown, bounces: 0,
+  },
+  bouncy: {
+    name: 'Bouncy', blurb: 'Bounces off walls', icon: '🏀', color: 0xff5ad2,
+    pellets: 1, pelletsPerFinger: 1, spread: 0, speed: 14, range: 12, damage: 0.9, cooldown: BRAWLER.shotCooldown, bounces: 2,
+  },
+  sniper: {
+    name: 'Sniper', blurb: 'Long range, big damage, slow to fire', icon: '🎯', color: 0x7dff6a,
+    pellets: 1, pelletsPerFinger: 1, spread: 0, speed: 26, range: 13, damage: 1.7, cooldown: 0.6, bounces: 0,
+  },
+};
+
+export const AMMO_PICKUP = {
+  duration: 20, // seconds a picked-up bullet type lasts
+  pickupRadius: 0.75,
+  startCount: 10, // on the map when the match starts
+  maxOnMap: 10,
+  respawnEvery: 7, // seconds between new ones appearing inside the zone, while below the max
+  crateDropChance: 0.4, // chance a broken crate also drops one
+};
+
+/** Fire bullets: a hit sets the target burning. Another hit restarts the burn; it doesn't stack. */
+export const BURN = { duration: 3, damagePerSecond: 230 };
+
+/** Ice bullets: a hit slows the target's walking (not dashes). */
+export const CHILL = { duration: 1.6, speedMultiplier: 0.5 };

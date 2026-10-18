@@ -1,6 +1,6 @@
-import { BOT_SKILL, BRAWLER, BULLET, BotDifficulty, DEFAULT_BOT_DIFFICULTY, FINGERS, MAP_SIZE } from './config';
+import { BOT_SKILL, BRAWLER, BotDifficulty, DEFAULT_BOT_DIFFICULTY, FINGERS, MAP_SIZE } from './config';
 import { Tile } from './map';
-import { fingerCount } from './world';
+import { ammoOf, fingerCount } from './world';
 import type { Brawler, Command, World } from './world';
 
 interface BotMemory {
@@ -132,11 +132,13 @@ export class BotBrain {
       return;
     }
 
-    // 3. Grab nearby cubes and dropped fingers.
+    // 3. Grab nearby cubes, dropped fingers and ammo boxes (bots aren't picky about bullet type).
     let bestCube: { x: number; y: number } | null = null;
     let bestD = 12;
     const wantsFingers = fingerCount(bot) < FINGERS.max;
-    for (const c of wantsFingers ? [...w.cubes, ...w.fingers] : w.cubes) {
+    const wantsAmmo = bot.ammoKind === 'normal' || bot.ammoUntil - w.time < 6;
+    const loot = [...w.cubes, ...(wantsFingers ? w.fingers : []), ...(wantsAmmo ? w.ammoPickups : [])];
+    for (const c of loot) {
       const d = Math.hypot(c.x - bot.x, c.y - bot.y);
       if (d < bestD && !w.isOutsideZone(c.x, c.y, 1)) {
         bestD = d;
@@ -210,7 +212,8 @@ export class BotBrain {
     const d = Math.hypot(dx, dy);
 
     // Lead the shot a little, then add personal aim error.
-    const t = d / BULLET.speed;
+    const ammo = ammoOf(bot);
+    const t = d / ammo.speed;
     const lead = this.skill.lead;
     const lx = target.x + target.moveX * BRAWLER.speed * t * lead - bot.x;
     const ly = target.y + target.moveY * BRAWLER.speed * t * lead - bot.y;
@@ -220,7 +223,7 @@ export class BotBrain {
 
     // Keep a comfortable distance and strafe, unless retreating along a path.
     if (m.path.length === 0) {
-      const want = 5.5;
+      const want = Math.min(5.5, ammo.range * 0.6); // close in with a shotgun
       const radial = d > want + 1 ? 1 : d < want - 1.5 ? -1 : 0;
       const nx = dx / (d || 1);
       const ny = dy / (d || 1);
@@ -236,10 +239,10 @@ export class BotBrain {
     if (!los) return;
     if (this.skill.usesSuper && bot.superCharge >= 1 && d < 6) {
       cmd.superFire = true;
-    } else if (w.isRapidFiring(bot) && d < BULLET.range * 0.95 && m.fireDelay <= 0) {
+    } else if (w.isRapidFiring(bot) && d < ammo.range * 0.95 && m.fireDelay <= 0) {
       cmd.fire = true;
       m.fireDelay = (0.2 + Math.random() * 0.1) * this.skill.fireDelay;
-    } else if (d < BULLET.range * 0.95 && m.fireDelay <= 0 && bot.ammo >= 1) {
+    } else if (d < ammo.range * 0.95 && m.fireDelay <= 0 && bot.ammo >= 1) {
       cmd.fire = true;
       m.fireDelay = (0.55 + Math.random() * 0.6) * this.skill.fireDelay;
     }

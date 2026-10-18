@@ -1,4 +1,4 @@
-import { ABILITY, AbilityKind, BRAWLER, ZONE } from './sim/config';
+import { ABILITY, AMMO, AbilityKind, AmmoKind, BRAWLER, ZONE } from './sim/config';
 import { type Brawler, type World, fingerCount, nextAbility } from './sim/world';
 import type { GameScene } from './render/scene';
 
@@ -21,6 +21,7 @@ export class Hud {
   private cubes: HTMLElement;
   private streak: HTMLElement;
   private fingers: HTMLElement;
+  private ammo: HTMLElement;
   private banner: HTMLElement;
   private flash: { text: string; until: number } | null = null;
   private time = 0;
@@ -40,7 +41,8 @@ export class Hud {
     this.cubes = el('div', 'hud-pill hud-cubes');
     this.fingers = el('div', 'hud-pill hud-fingers');
     this.streak = el('div', 'hud-pill hud-streak');
-    top.append(this.left, this.cubes, this.fingers, this.streak);
+    this.ammo = el('div', 'hud-pill hud-ammo');
+    top.append(this.left, this.cubes, this.fingers, this.streak, this.ammo);
     this.banner = el('div', 'hud-banner');
     root.append(top, this.banner);
 
@@ -87,6 +89,11 @@ export class Hud {
     this.announce(`${ABILITY_LABEL[kind]} unlocked! (Q)`);
   }
 
+  ammoPickedUp(kind: AmmoKind) {
+    const a = AMMO[kind];
+    this.announce(`${a.icon} ${a.name.toUpperCase()} BULLETS! ${a.blurb}`, 2.2);
+  }
+
   damagePopup(x: number, y: number, amount: number, onPlayer: boolean, blocked = false) {
     const p = el('div', `popup ${onPlayer ? 'popup-me' : ''} ${blocked ? 'popup-block' : ''}`);
     p.textContent = blocked ? 'BLOCK' : String(Math.round(amount));
@@ -128,6 +135,16 @@ export class Hud {
     this.fingers.innerHTML = `<span class="hud-icon">☝️</span> ${fingers}`;
     this.streak.style.display = player.streak > 0 ? '' : 'none';
     this.streak.innerHTML = `<span class="hud-icon">🔥</span> ${player.streak}`;
+    // Special bullets: what you have and how long it lasts.
+    const special = player.alive && player.ammoKind !== 'normal';
+    this.ammo.style.display = special ? '' : 'none';
+    if (special) {
+      const a = AMMO[player.ammoKind];
+      const left = Math.max(0, Math.ceil(player.ammoUntil - w.time));
+      this.ammo.style.setProperty('--ammo-color', `#${a.color.toString(16).padStart(6, '0')}`);
+      this.ammo.innerHTML = `<span class="hud-icon">${a.icon}</span> ${a.name}${Number.isFinite(left) ? ` ${left}s` : ''}`;
+      this.ammo.classList.toggle('hud-ammo-low', left <= 4);
+    }
 
     const closing = w.time > ZONE.startDelay;
     const untilClose = Math.ceil(ZONE.startDelay - w.time);

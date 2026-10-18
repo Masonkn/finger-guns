@@ -9,7 +9,6 @@ import { Connection } from './net/connection';
 import { OnlineMatch } from './net/online';
 import {
   BOT_DIFFICULTY_NAMES,
-  BULLET,
   BotDifficulty,
   DEFAULT_BOT_DIFFICULTY,
   PLAYER_COUNT,
@@ -23,7 +22,7 @@ import {
 } from './sim/config';
 import { type LobbyPlayer, type ServerMessage, cleanName } from './net/protocol';
 import { GameScene, createRenderer } from './render/scene';
-import type { World } from './sim/world';
+import { type World, ammoOf } from './sim/world';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -524,7 +523,7 @@ function frame(now: number) {
 
   const intent = input.read(player.x, player.y);
   if (intent.autoAim) {
-    const d = autoAimDirection(match, intent.superFire ? SUPER.range : BULLET.range);
+    const d = autoAimDirection(match, intent.superFire ? SUPER.range : ammoOf(player).range);
     if (d) {
       intent.aimX = d.x;
       intent.aimY = d.y;
@@ -541,6 +540,7 @@ function frame(now: number) {
     if (e.type === 'pickup' && e.brawlerId === player.id && e.sharedBy) {
       hud.announce(`${nameOf(world, e.sharedBy)} shared a power cube!`, 1.6);
     }
+    if (e.type === 'ammoPickup' && e.brawlerId === player.id) hud.ammoPickedUp(e.kind);
   }
   scene.render(dt, { x: intent.aimX, y: intent.aimY, active: intent.aimActive, isSuper: intent.superAiming });
   world.events.length = 0;

@@ -1,10 +1,21 @@
 import type { Match, MatchResult } from '../game/match';
 import type { PlayerIntent } from '../input';
 import { DEFAULT_LOOK, type PlayerLook, type TopperId, isGloveId, isTopperId, randomLook } from '../render/cosmetics';
-import { BRAWLER, BULLET, RAPID_FIRE_SHOT_COOLDOWN, SUPER } from '../sim/config';
-import { Brawler, Point, World } from '../sim/world';
+import { AMMO, AMMO_KINDS, AmmoKind, BRAWLER, RAPID_FIRE_SHOT_COOLDOWN, SUPER } from '../sim/config';
+import { Brawler, Point, World, ammoOf } from '../sim/world';
 import type { Connection } from './connection';
-import { type WireLook, ClientMessage, FX_DASH, FX_RAPID, FX_SHIELD, ServerMessage, Snapshot, TICK } from './protocol';
+import {
+  type WireLook,
+  ClientMessage,
+  FX_BURN,
+  FX_CHILL,
+  FX_DASH,
+  FX_RAPID,
+  FX_SHIELD,
+  ServerMessage,
+  Snapshot,
+  TICK,
+} from './protocol';
 
 // How far behind the newest snapshot other players are drawn, so there are
 // always two snapshots to blend between even when packets arrive unevenly.
@@ -120,7 +131,7 @@ export class OnlineMatch implements Match {
       this.prevPred = { ...this.pred };
       if (me.alive) {
         // While dashing the server moves the hand; reconcile picks up where it lands.
-        if (!this.world.isDashing(me)) this.world.moveBody(this.pred, input.mx, input.my, TICK);
+        if (!this.world.isDashing(me)) this.world.moveBody(this.pred, input.mx, input.my, TICK, this.world.speedScale(me));
         this.predictShot(input, now);
       }
     }
@@ -155,7 +166,7 @@ export class OnlineMatch implements Match {
     }
     // Rapid fire shoots faster and uses no ammo.
     const rapid = this.world.isRapidFiring(me);
-    const cooldown = rapid ? RAPID_FIRE_SHOT_COOLDOWN : BRAWLER.shotCooldown;
+    const cooldown = rapid ? RAPID_FIRE_SHOT_COOLDOWN : ammoOf(me).cooldown;
     if (input.f && (rapid || this.predictedAmmo >= 1) && now - this.lastLocalShot >= cooldown) {
       this.world.events.push({ type: 'shot', brawlerId: me.id, isSuper: false });
       if (!rapid) this.predictedAmmo -= 1;
@@ -197,6 +208,10 @@ export class OnlineMatch implements Match {
       b.shieldUntil = s.fx & FX_SHIELD ? Infinity : 0;
       b.rapidUntil = s.fx & FX_RAPID ? Infinity : 0;
       b.dashUntil = s.fx & FX_DASH ? Infinity : 0;
+      b.burnUntil = s.fx & FX_BURN ? Infinity : 0;
+      b.chillUntil = s.fx & FX_CHILL ? Infinity : 0;
+      b.ammoKind = kindAt(s.ak);
+      b.ammoUntil = s.au ?? (b.ammoKind === 'normal' ? 0 : Infinity);
       if (s.id !== this.playerId) {
         b.moveX = s.mx;
         b.moveY = s.my;
@@ -212,6 +227,7 @@ export class OnlineMatch implements Match {
 
     w.cubes = snap.cubes.map(([id, x, y]) => ({ id, x, y, alive: true }));
     w.fingers = snap.fingers.map(([id, x, y, fromId]) => ({ id, x, y, fromId, alive: true }));
+    w.ammoPickups = (snap.ammo ?? []).map(([id, x, y, k]) => ({ id, x, y, kind: kindAt(k), alive: true }));
 
     for (const e of snap.ev) {
       if (e.type === 'shot' && e.brawlerId === this.playerId) continue; // already shown locally
@@ -228,7 +244,8 @@ export class OnlineMatch implements Match {
   private reconcile(x: number, y: number, ack: number) {
     this.pending = this.pending.filter((p) => p.seq > ack);
     const corrected = { x, y };
-    for (const p of this.pending) this.world.moveBody(corrected, p.mx, p.my, TICK);
+    const scale = this.world.speedScale(this.me);
+    for (const p of this.pending) this.world.moveBody(corrected, p.mx, p.my, TICK, scale);
     const error = Math.hypot(corrected.x - this.pred.x, corrected.y - this.pred.y);
     this.stats.snapshots++;
     if (error > 0.01) {
@@ -280,7 +297,8 @@ export class OnlineMatch implements Match {
     if (!latest) return;
     const age = Math.min(0.15, now - latest.at);
     this.world.bullets = latest.snap.bul.map((u) => {
-      const speed = u.sup ? SUPER.speed : BULLET.speed;
+      const kind = kindAt(u.k);
+      const speed = u.sup ? SUPER.speed : AMMO[kind].speed;
       return {
         id: u.id,
         ownerId: 0,
@@ -294,11 +312,17 @@ export class OnlineMatch implements Match {
         range: 0,
         damage: 0,
         isSuper: u.sup === 1,
+        kind,
+        bouncesLeft: 0,
         chargeShare: 0,
         alive: true,
       };
     });
   }
+}
+
+function kindAt(index: number | undefined): AmmoKind {
+  return AMMO_KINDS[index ?? 0] ?? 'normal';
 }
 
 function round3(n: number) {

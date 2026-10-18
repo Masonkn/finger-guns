@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { BULLET, MAP_SIZE, SUPER } from '../sim/config';
+import { AMMO, AmmoKind, FINGERS, MAP_SIZE, SUPER } from '../sim/config';
 import { Tile } from '../sim/map';
-import type { Brawler, World } from '../sim/world';
+import { type Brawler, type World, ammoOf, fingerCount } from '../sim/world';
 import { type PlayerLook, handSurfaceColor } from './cosmetics';
 import { FingerLook, HandModel, buildFingerTrophy } from './hand';
 import { Particles } from './particles';
@@ -35,8 +35,11 @@ export class GameScene {
   /** Skin and sleeve colour of every brawler, for finger drops and collected fingers. */
   private looks = new Map<number, FingerLook>();
   private bulletMeshes = new Map<number, THREE.Mesh>();
-  private bulletPool: THREE.Mesh[] = [];
-  private superBulletPool: THREE.Mesh[] = [];
+  /** Spare bullet meshes, by bullet type ('super' for supers). */
+  private bulletPools = new Map<string, THREE.Mesh[]>();
+  private ammoMeshes = new Map<number, THREE.Group>();
+  private ammoMats = new Map<AmmoKind, THREE.MeshToonMaterial>();
+  private effectClock = 0; // paces flame, frost and ammo sparkle particles
   private particles = new Particles();
   private wallFade: FadeUniforms = makeFadeUniforms(0, 1.2);
   private bushFade: FadeUniforms = makeFadeUniforms(1, 2.0);
@@ -47,6 +50,8 @@ export class GameScene {
   private camTarget = new THREE.Vector3(MAP_SIZE / 2, 0, MAP_SIZE / 2);
   private aimLine: THREE.Mesh;
   private aimFan: THREE.Mesh;
+  private aimSpray: THREE.Mesh; // shotgun spread
+  private aimSprayWidth = -1;
   private dummy = new THREE.Object3D();
   private shake = 0;
   private clockTime = 0;
@@ -98,9 +103,11 @@ export class GameScene {
     lineGeo.translate(0.5, 0, 0);
     lineGeo.rotateX(-Math.PI / 2);
     this.aimLine = new THREE.Mesh(lineGeo, aimMat);
-    this.aimLine.scale.x = BULLET.range;
     this.aimLine.position.y = 0.05;
     this.scene.add(this.aimLine);
+    this.aimSpray = new THREE.Mesh(new THREE.BufferGeometry(), aimMat);
+    this.aimSpray.position.y = 0.05;
+    this.scene.add(this.aimSpray);
 
     const fanGeo = new THREE.CircleGeometry(SUPER.range, 24, -SUPER.spread / 2, SUPER.spread);
     fanGeo.rotateX(-Math.PI / 2);
@@ -181,6 +188,9 @@ export class GameScene {
     this.camTarget.lerp(new THREE.Vector3(follow.x, 0, follow.y), Math.min(1, dt * 6));
     this.placeCamera();
 
+    this.effectClock += dt;
+    const puff = this.effectClock >= 0.06; // about 16 puffs a second per effect
+    if (puff) this.effectClock = 0;
     for (const b of w.brawlers) {
       const hand = this.hands.get(b.id)!;
       if (!b.alive) {
@@ -194,6 +204,7 @@ export class GameScene {
         if (w.isDashing(b) && !hidden) {
           this.particles.burst(b.x, 0.35, b.y, 1, 0xffffff, { speed: 0.6, size: 0.22, life: 0.35, gravity: 0, up: 0.4 });
         }
+        if (puff && !hidden) this.statusEffects(b);
       }
       hand.update(dt, b.x, b.y, b.facing, moving, hidden);
     }
@@ -203,6 +214,7 @@ export class GameScene {
     this.syncCrates(dt);
     this.syncCubes();
     this.syncFingers();
+    this.syncAmmoPickups();
     this.updatePoison();
     this.particles.update(dt);
 
@@ -218,12 +230,26 @@ export class GameScene {
     const target = player.alive && player.inBush ? 1 : 0;
     this.bushFade.uFadeAmount.value += (target - this.bushFade.uFadeAmount.value) * Math.min(1, dt * 8);
 
-    // Aim guides.
+    // Aim guides: a line as long as your bullets fly, a spray for a shotgun, a fan for the super.
     const showAim = player.alive && aim.active;
     const angle = Math.atan2(aim.y, aim.x);
-    this.aimLine.visible = showAim && !aim.isSuper;
+    const ammo = ammoOf(player);
+    const spray = ammo.pellets > 1;
+    this.aimLine.visible = showAim && !aim.isSuper && !spray;
+    this.aimSpray.visible = showAim && !aim.isSuper && spray;
     this.aimFan.visible = showAim && aim.isSuper;
-    for (const m of [this.aimLine, this.aimFan]) {
+    this.aimLine.scale.x = ammo.range;
+    if (spray) {
+      const n = fingerCount(player);
+      const count = ammo.pellets + ammo.pelletsPerFinger * (n - 1);
+      const width = (count - 1) * FINGERS.spread + ammo.spread;
+      if (width !== this.aimSprayWidth) {
+        this.aimSprayWidth = width;
+        this.aimSpray.geometry.dispose();
+        this.aimSpray.geometry = new THREE.CircleGeometry(ammo.range, 20, -width / 2, width).rotateX(-Math.PI / 2);
+      }
+    }
+    for (const m of [this.aimLine, this.aimFan, this.aimSpray]) {
       m.position.x = player.x;
       m.position.z = player.y;
       m.rotation.y = -angle;
@@ -259,7 +285,8 @@ export class GameScene {
           const b = this.world.brawlers.find((x) => x.id === e.brawlerId)!;
           const tipX = b.x + Math.cos(b.facing) * 0.95;
           const tipY = b.y + Math.sin(b.facing) * 0.95;
-          this.particles.burst(tipX, 1.0, tipY, e.isSuper ? 10 : 4, 0xfff3a0, { speed: 2, size: 0.1, life: 0.18, gravity: 0, up: 0.3 });
+          const flash = e.isSuper ? 0xfff3a0 : ammoOf(b).color;
+          this.particles.burst(tipX, 1.0, tipY, e.isSuper ? 10 : 4, flash, { speed: 2, size: 0.1, life: 0.18, gravity: 0, up: 0.3 });
           if (e.brawlerId === player.id) this.addShake(e.isSuper ? 0.8 : 0.2);
           break;
         }
@@ -269,6 +296,9 @@ export class GameScene {
             break;
           }
           this.particles.burst(e.x, 0.6, e.y, 7, 0xffffff, { speed: 3, size: 0.1, life: 0.3 });
+          if (e.kind === 'fire' || e.kind === 'ice') {
+            this.particles.burst(e.x, 0.7, e.y, 10, AMMO[e.kind].color, { speed: 3, size: 0.13, life: 0.45, up: 2 });
+          }
           if (e.targetId === player.id) this.addShake(0.5);
           break;
         case 'wallHit':
@@ -311,6 +341,12 @@ export class GameScene {
         case 'death': {
           this.particles.burst(e.x, 0.6, e.y, 26, 0xffffff, { speed: 4, size: 0.2, life: 0.8, up: 3 });
           this.particles.burst(e.x, 0.6, e.y, 12, 0x2c2333, { speed: 3, size: 0.16, life: 0.9, up: 2 });
+          break;
+        }
+        case 'ammoPickup': {
+          const b = this.world.brawlers.find((x) => x.id === e.brawlerId)!;
+          this.particles.burst(b.x, 0.8, b.y, 16, AMMO[e.kind].color, { speed: 3, size: 0.14, life: 0.55, up: 3.5 });
+          if (b.id === player.id) this.addShake(0.25);
           break;
         }
         case 'pickup': {
@@ -567,36 +603,106 @@ export class GameScene {
   }
 
   private bulletGeo = new THREE.SphereGeometry(1, 12, 8);
-  private bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff27a });
-  private superMat = new THREE.MeshBasicMaterial({ color: 0xff9a2e });
 
   private syncBullets() {
     const alive = new Set<number>();
     for (const b of this.world.bullets) {
       alive.add(b.id);
+      const style = b.isSuper ? 'super' : b.kind;
       let m = this.bulletMeshes.get(b.id);
       if (!m) {
-        const pool = b.isSuper ? this.superBulletPool : this.bulletPool;
-        m = pool.pop();
+        m = this.bulletPools.get(style)?.pop();
         if (!m) {
-          m = new THREE.Mesh(this.bulletGeo, b.isSuper ? this.superMat : this.bulletMat);
-          const hull = new THREE.Mesh(this.bulletGeo, outlineMaterial(0.35, b.isSuper ? 0x8a2a00 : 0xd46a00));
-          m.add(hull);
-          m.userData.isSuper = b.isSuper;
+          const color = b.isSuper ? 0xff9a2e : AMMO[b.kind].color;
+          const edge = b.isSuper ? 0x8a2a00 : BULLET_EDGE[b.kind];
+          m = new THREE.Mesh(this.bulletGeo, new THREE.MeshBasicMaterial({ color }));
+          m.add(new THREE.Mesh(this.bulletGeo, outlineMaterial(0.35, edge)));
+          m.userData.style = style;
         }
         this.scene.add(m);
         this.bulletMeshes.set(b.id, m);
       }
-      const r = b.isSuper ? 0.2 : 0.15;
+      const r = b.isSuper ? 0.2 : b.kind === 'shotgun' ? 0.1 : 0.15;
+      const stretch = b.kind === 'sniper' && !b.isSuper ? 4 : 2.2;
       m.position.set(b.x, 0.95, b.y);
       m.rotation.set(0, -Math.atan2(b.dy, b.dx), 0);
-      m.scale.set(r * 2.2, r, r);
+      m.scale.set(r * stretch, r, r);
+      // Fire and ice bullets leave a little trail.
+      if (!b.isSuper && (b.kind === 'fire' || b.kind === 'ice') && Math.random() < 0.5) {
+        this.particles.burst(b.x, 0.95, b.y, 1, AMMO[b.kind].color, { speed: 0.4, size: 0.09, life: 0.25, gravity: 0, up: 0.3 });
+      }
     }
     for (const [id, m] of this.bulletMeshes) {
       if (alive.has(id)) continue;
       m.removeFromParent();
-      (m.userData.isSuper ? this.superBulletPool : this.bulletPool).push(m);
+      const style = m.userData.style as string;
+      if (!this.bulletPools.has(style)) this.bulletPools.set(style, []);
+      this.bulletPools.get(style)!.push(m);
       this.bulletMeshes.delete(id);
+    }
+  }
+
+  /** Flames on burning hands, frost on chilled ones, sparkles on special-ammo fingertips. */
+  private statusEffects(b: Brawler) {
+    const w = this.world;
+    if (w.isBurning(b)) {
+      this.particles.burst(b.x, 0.9, b.y, 2, Math.random() < 0.5 ? 0xff6a1f : 0xffc23a, {
+        speed: 0.8, size: 0.16, life: 0.4, gravity: -2, up: 1.5,
+      });
+    }
+    if (w.isChilled(b)) {
+      this.particles.burst(b.x, 0.7, b.y, 2, Math.random() < 0.5 ? 0x8fe8ff : 0xffffff, {
+        speed: 1.2, size: 0.12, life: 0.45, gravity: 1, up: 0.6,
+      });
+    }
+    if (b.ammoKind !== 'normal') {
+      const tipX = b.x + Math.cos(b.facing) * 0.95;
+      const tipY = b.y + Math.sin(b.facing) * 0.95;
+      this.particles.burst(tipX, 1.0, tipY, 1, AMMO[b.ammoKind].color, { speed: 0.4, size: 0.08, life: 0.3, gravity: 0, up: 0.5 });
+    }
+  }
+
+  private ammoBoxGeo = new RoundedBoxGeometry(0.56, 0.56, 0.56, 2, 0.08);
+  private ammoRingGeo = new THREE.RingGeometry(0.4, 0.54, 28);
+
+  /** Ammo boxes: a spinning box in the bullet type's colour with its picture on every face. */
+  private syncAmmoPickups() {
+    const alive = new Set<number>();
+    for (const p of this.world.ammoPickups) {
+      alive.add(p.id);
+      let g = this.ammoMeshes.get(p.id);
+      if (!g) {
+        g = new THREE.Group();
+        let mat = this.ammoMats.get(p.kind);
+        if (!mat) {
+          mat = makeAmmoMaterial(p.kind);
+          this.ammoMats.set(p.kind, mat);
+        }
+        const box = new THREE.Mesh(this.ammoBoxGeo, mat);
+        withOutline(box, 0.04);
+        box.castShadow = true;
+        box.name = 'box';
+        g.add(box);
+        const ring = new THREE.Mesh(
+          this.ammoRingGeo,
+          new THREE.MeshBasicMaterial({ color: AMMO[p.kind].color, transparent: true, opacity: 0.85, depthWrite: false }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = 0.04;
+        g.add(ring);
+        this.scene.add(g);
+        this.ammoMeshes.set(p.id, g);
+      }
+      g.position.set(p.x, 0, p.y);
+      const box = g.getObjectByName('box')!;
+      box.position.y = 0.55 + Math.sin(this.clockTime * 3 + p.id) * 0.1;
+      box.rotation.set(0.35, this.clockTime * 1.5 + p.id, 0);
+    }
+    for (const [id, g] of this.ammoMeshes) {
+      if (alive.has(id)) continue;
+      g.removeFromParent();
+      ((g.children[1] as THREE.Mesh).material as THREE.Material).dispose(); // the ring; the box material is shared
+      this.ammoMeshes.delete(id);
     }
   }
 
@@ -768,6 +874,37 @@ function makeCubeMaterial(): THREE.MeshToonMaterial {
     return tex;
   };
   return toon(0xffffff, { map: draw('#55e85a'), emissive: 0xffffff, emissiveMap: draw('#1d7a22') });
+}
+
+const BULLET_EDGE: Record<AmmoKind, number> = {
+  normal: 0xd46a00,
+  shotgun: 0x6b6b80,
+  fire: 0xa82200,
+  ice: 0x1f7fb0,
+  bouncy: 0x9a1f7f,
+  sniper: 0x1f8a2a,
+};
+
+/** Ammo box material: the bullet type's colour with its icon on every face. */
+function makeAmmoMaterial(kind: AmmoKind): THREE.MeshToonMaterial {
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d')!;
+  g.fillStyle = `#${AMMO[kind].color.toString(16).padStart(6, '0')}`;
+  g.fillRect(0, 0, size, size);
+  g.fillStyle = 'rgba(255,255,255,0.85)';
+  g.beginPath();
+  g.arc(size / 2, size / 2, 44, 0, Math.PI * 2);
+  g.fill();
+  g.font = '62px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(AMMO[kind].icon, size / 2, size / 2 + 4);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return toon(0xffffff, { map: tex, emissive: 0x333333 });
 }
 
 function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

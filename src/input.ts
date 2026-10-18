@@ -25,6 +25,8 @@ interface Stick {
 }
 
 const DEADZONE = 18; // px a stick must move before it counts as aiming
+const STICKS = ['moveStick', 'attackStick', 'superStick'] as const;
+type StickSlot = (typeof STICKS)[number];
 
 /**
  * Desktop: WASD/arrows to move, mouse to aim, click (hold) to shoot,
@@ -71,13 +73,28 @@ export class Input {
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.mouse.down = false;
+      this.releaseAllSticks(false);
     });
+    // Leaving the app (home swipe, app switcher, Slide Over) can swallow a touch's
+    // pointerup on iOS, which used to leave a stick held until the page was reloaded.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.releaseAllSticks(false);
+    });
+    window.addEventListener('pagehide', () => this.releaseAllSticks(false));
+    // Safety net: once no finger is on the screen, nothing can still be held.
+    const allLifted = (e: TouchEvent) => {
+      if (e.touches.length === 0) this.releaseAllSticks(true);
+    };
+    window.addEventListener('touchend', allLifted, { capture: true });
+    window.addEventListener('touchcancel', allLifted, { capture: true });
 
     root.addEventListener('contextmenu', (e) => e.preventDefault());
     root.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     window.addEventListener('pointermove', (e) => this.onPointerMove(e));
     window.addEventListener('pointerup', (e) => this.onPointerUp(e));
-    window.addEventListener('pointercancel', (e) => this.onPointerUp(e));
+    window.addEventListener('pointercancel', (e) => this.onPointerCancel(e));
+    // Fires after pointerup too; by then the stick is gone, so this only catches lost touches.
+    root.addEventListener('lostpointercapture', (e) => this.onPointerCancel(e));
     superButton.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'mouse') {
         this.superReleased = true; // click on desktop fires immediately at the mouse
@@ -87,6 +104,7 @@ export class Input {
       e.stopPropagation();
       e.preventDefault();
       this.touchMode = true;
+      this.releaseStick('superStick', false);
       this.superStick = this.makeStick(e, false);
     });
     // A tap, not a stick: abilities need no aiming (dash goes the way you're moving).
@@ -101,6 +119,8 @@ export class Input {
 
   setScene(scene: GameScene) {
     this.scene = scene;
+    this.releaseAllSticks(false);
+    this.pendingFire = null;
   }
 
   get isTouch() {
@@ -190,11 +210,11 @@ export class Input {
     }
     e.preventDefault();
     this.touchMode = true;
-    if (e.clientX < window.innerWidth / 2) {
-      if (!this.moveStick) this.moveStick = this.makeStick(e, true);
-    } else if (!this.attackStick) {
-      this.attackStick = this.makeStick(e, false);
-    }
+    // A new touch on a side takes that side over. If the old finger's pointerup was
+    // lost, refusing new touches here is what left a stick stuck for good.
+    const slot = e.clientX < window.innerWidth / 2 ? 'moveStick' : 'attackStick';
+    this.releaseStick(slot, false);
+    this[slot] = this.makeStick(e, slot === 'moveStick');
   }
 
   private onPointerMove(e: PointerEvent) {
@@ -223,21 +243,48 @@ export class Input {
       }
       return;
     }
-    if (this.moveStick?.pointerId === e.pointerId) {
-      this.moveStick.el.remove();
-      this.moveStick = null;
-    }
-    for (const which of ['attackStick', 'superStick'] as const) {
-      const s = this[which];
-      if (!s || s.pointerId !== e.pointerId) continue;
-      const dragged = Math.hypot(s.dx, s.dy) > DEADZONE;
-      this.pendingFire = { dx: s.dx, dy: s.dy, auto: !dragged, isSuper: which === 'superStick' };
-      s.el.remove();
-      this[which] = null;
+    for (const slot of STICKS) {
+      if (this[slot]?.pointerId === e.pointerId) this.releaseStick(slot, true);
     }
   }
 
+  /** The system took the touch away (gesture, alert, too many fingers): drop it without shooting. */
+  private onPointerCancel(e: PointerEvent) {
+    if (e.pointerType === 'mouse') {
+      this.mouse.down = false;
+      this.superHeld = false;
+      return;
+    }
+    for (const slot of STICKS) {
+      if (this[slot]?.pointerId === e.pointerId) this.releaseStick(slot, false);
+    }
+  }
+
+  /** Lets go of a stick; `fire` makes an attack/super stick shoot as on a normal release. */
+  private releaseStick(slot: StickSlot, fire: boolean) {
+    const s = this[slot];
+    if (!s) return;
+    if (fire && slot !== 'moveStick') {
+      const dragged = Math.hypot(s.dx, s.dy) > DEADZONE;
+      this.pendingFire = { dx: s.dx, dy: s.dy, auto: !dragged, isSuper: slot === 'superStick' };
+    }
+    s.el.remove();
+    this[slot] = null;
+  }
+
+  private releaseAllSticks(fire: boolean) {
+    for (const slot of STICKS) this.releaseStick(slot, fire);
+  }
+
   private makeStick(e: PointerEvent, isMove: boolean): Stick {
+    // Keep the touch's events on an element that never leaves the page, so its
+    // pointerup still bubbles to window even if whatever was under the finger is removed.
+    const target = e.currentTarget instanceof HTMLElement ? e.currentTarget : this.root;
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch {
+      // The pointer is already gone; the all-fingers-lifted check cleans up.
+    }
     const el = document.createElement('div');
     el.className = `stick ${isMove ? 'stick-move' : 'stick-attack'}`;
     const knob = document.createElement('div');
