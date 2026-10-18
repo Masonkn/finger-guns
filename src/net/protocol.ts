@@ -54,17 +54,21 @@ export interface BrawlerState {
   bush: 0 | 1;
   stk: number; // kill streak
   fg: number[]; // extra fingers, by the id of the brawler each came from
-  fx: number; // active ability effects: 1 shield, 2 rapid fire, 4 dash
+  fx: number; // active effects: 1 shield, 2 rapid fire, 4 dash, 8 burning, 16 chilled
+  ak?: number; // bullet type as an index into AMMO_KINDS, left out for normal
   // Own brawler only:
   ammo?: number;
   sup?: number;
   ar?: [dash: number, shield: number, rapidFire: number]; // world time each ability is ready again
   al?: number; // world time any ability can be used again
+  au?: number; // world time special bullets run out
 }
 
 export const FX_SHIELD = 1;
 export const FX_RAPID = 2;
 export const FX_DASH = 4;
+export const FX_BURN = 8;
+export const FX_CHILL = 16;
 
 export interface BulletState {
   id: number;
@@ -73,6 +77,7 @@ export interface BulletState {
   dx: number;
   dy: number;
   sup: 0 | 1;
+  k?: number; // bullet type index into AMMO_KINDS, left out for normal
 }
 
 export interface Snapshot {
@@ -86,6 +91,7 @@ export interface Snapshot {
   bul: BulletState[];
   cubes: [id: number, x: number, y: number][];
   fingers: [id: number, x: number, y: number, fromId: number][];
+  ammo: [id: number, x: number, y: number, kind: number][]; // ammo boxes on the ground
   ev: GameEvent[];
 }
 

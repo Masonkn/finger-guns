@@ -17,6 +17,7 @@ for (let m = 0; m < matches; m++) {
   let fingerPickups = 0;
   const abilities = { dash: 0, shield: 0, rapidFire: 0 };
   let blocked = 0;
+  const ammoPickups: Record<string, number> = {};
   while (world.winnerId === null && world.time < 300) {
     const cmds = new Map<number, Command>();
     for (const b of world.brawlers) if (b.alive) cmds.set(b.id, brain.command(b, STEP));
@@ -27,6 +28,7 @@ for (let m = 0; m < matches; m++) {
       if (e.type === 'fingerPickup') fingerPickups++;
       if (e.type === 'ability') abilities[e.ability]++;
       if (e.type === 'hit' && e.blocked) blocked++;
+      if (e.type === 'ammoPickup') ammoPickups[e.kind] = (ammoPickups[e.kind] ?? 0) + 1;
     }
     world.events.length = 0;
   }
@@ -40,5 +42,6 @@ for (let m = 0; m < matches; m++) {
   console.log(
     `  top hand ${winner?.name ?? 'none'} (${winner?.kills ?? 0} KOs, ${winner?.cubes ?? 0} cubes, ${winner ? fingerCount(winner) : 0} fingers, streak ${winner?.streak ?? 0}), shots ${shots}, crates broken ${crates}/${world.crates.length}, eliminated ${zoneDeaths}, finger pickups ${fingerPickups}, best streak ${maxStreak}, abilities dash ${abilities.dash} / shield ${abilities.shield} (${blocked} blocked) / rapid ${abilities.rapidFire}`,
   );
+  console.log(`  ammo pickups ${Object.entries(ammoPickups).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'}`);
   if (winner === undefined) process.exitCode = 1;
 }

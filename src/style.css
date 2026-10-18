@@ -149,6 +149,9 @@ html, body {
 .popup.popup-block { color: #7fe8ff; font-size: 18px; }
 .hud-streak { color: #ffb13a; }
 .hud-fingers { color: #ffe9d6; }
+.hud-ammo { color: var(--ammo-color, #fff); border-color: var(--ammo-color, var(--ink)); }
+.hud-ammo-low { animation: ammo-blink 0.5s steps(2) infinite; }
+@keyframes ammo-blink { 50% { opacity: 0.45; } }
 @media (max-width: 480px) {
   .hud-top { gap: 6px; }
   .hud-pill { font-size: 16px; padding: 3px 9px; border-radius: 10px; }
