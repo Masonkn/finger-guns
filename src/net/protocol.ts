@@ -10,12 +10,19 @@ export const ROOM_CODE_LENGTH = 4;
 
 // --- Client -> server --------------------------------------------------------
 
+/** Hand colour and thumb topper, as sent over the wire. The client validates the topper. */
+export interface WireLook {
+  color: number;
+  topper: string;
+}
+
 export type ClientMessage =
-  | { t: 'join'; name: string; mode: 'quick' } // matchmaking into a public match
-  | { t: 'join'; name: string; mode: 'create' } // new private match with a code
-  | { t: 'join'; name: string; mode: 'code'; code: string } // join a friend's private match
+  | { t: 'join'; name: string; look?: WireLook; mode: 'quick' } // matchmaking into a public match
+  | { t: 'join'; name: string; look?: WireLook; mode: 'create' } // new private match with a code
+  | { t: 'join'; name: string; look?: WireLook; mode: 'code'; code: string } // join a friend's private match
   | { t: 'start' } // start a private match early
-  | { t: 'input'; seq: number; mx: number; my: number; ax: number; ay: number; f: 0 | 1; s: 0 | 1 }
+  // q: use the current kill-streak ability
+  | { t: 'input'; seq: number; mx: number; my: number; ax: number; ay: number; f: 0 | 1; s: 0 | 1; q?: 0 | 1 }
   | { t: 'leave' };
 
 // --- Server -> client --------------------------------------------------------
@@ -37,10 +44,19 @@ export interface BrawlerState {
   mhp: number;
   cubes: number;
   bush: 0 | 1;
+  stk: number; // kill streak
+  fg: number[]; // extra fingers, by the id of the brawler each came from
+  fx: number; // active ability effects: 1 shield, 2 rapid fire, 4 dash
   // Own brawler only:
   ammo?: number;
   sup?: number;
+  ar?: [dash: number, shield: number, rapidFire: number]; // world time each ability is ready again
+  al?: number; // world time any ability can be used again
 }
+
+export const FX_SHIELD = 1;
+export const FX_RAPID = 2;
+export const FX_DASH = 4;
 
 export interface BulletState {
   id: number;
@@ -61,12 +77,13 @@ export interface Snapshot {
   b: BrawlerState[]; // only the brawlers this client can currently see
   bul: BulletState[];
   cubes: [id: number, x: number, y: number][];
+  fingers: [id: number, x: number, y: number, fromId: number][];
   ev: GameEvent[];
 }
 
 export type ServerMessage =
   | { t: 'lobby'; code: string | null; players: LobbyPlayer[]; startsIn: number | null; canStart: boolean }
-  | { t: 'start'; seed: number; you: number; players: { id: number; name: string }[] }
+  | { t: 'start'; seed: number; you: number; players: { id: number; name: string; look: WireLook | null }[] }
   | Snapshot
   | { t: 'result'; rank: number; kills: number; cubes: number; winner: string | null }
   | { t: 'error'; message: string };
@@ -82,4 +99,13 @@ export function cleanName(raw: unknown): string {
     .trim()
     .slice(0, MAX_NAME_LENGTH);
   return name || `Hand${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+/** Keeps a client-supplied look to a colour and a short topper id; the client checks the id against its list. */
+export function cleanLook(raw: unknown): WireLook | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { color, topper } = raw as Record<string, unknown>;
+  if (typeof color !== 'number' || !Number.isInteger(color) || color < 0 || color > 0xffffff) return null;
+  if (typeof topper !== 'string' || !/^[a-zA-Z]{1,20}$/.test(topper)) return null;
+  return { color, topper };
 }

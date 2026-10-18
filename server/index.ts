@@ -2,7 +2,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
-import { ClientMessage, ROOM_CODE_LENGTH, TICK, cleanName } from '../src/net/protocol';
+import { ClientMessage, ROOM_CODE_LENGTH, TICK, cleanLook, cleanName } from '../src/net/protocol';
 import { Client, Room, send } from './room';
 
 // One process serves the built game (dist/) and runs every match over WebSockets at /ws.
@@ -61,6 +61,7 @@ wss.on('connection', (ws) => {
   const client: Client = {
     ws,
     name: '',
+    look: null,
     room: null,
     brawlerId: null,
     inputs: [],
@@ -99,6 +100,7 @@ function handle(client: Client, msg: ClientMessage) {
     case 'join': {
       client.room?.remove(client);
       client.name = cleanName(msg.name);
+      client.look = cleanLook(msg.look);
       const room = findRoom(client, msg);
       if (room) room.add(client);
       break;
@@ -116,6 +118,7 @@ function handle(client: Client, msg: ClientMessage) {
         ay: clamp(msg.ay, 100),
         f: msg.f ? 1 : 0,
         s: msg.s ? 1 : 0,
+        q: msg.q ? 1 : 0,
       });
       break;
     case 'leave':

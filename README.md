@@ -27,8 +27,14 @@ A single small instance handles many matches. Each match uses about 30 KB/s of b
 
 ## Controls
 
-- **Desktop:** WASD to move, the mouse to aim, click (or hold) to shoot. Hold Space, E or right-click to aim the super, then release to fire it.
-- **Touch:** the left half of the screen is a floating move stick. On the right half, drag and release to shoot, or tap to auto-aim. Drag the yellow button to fire the super.
+- **Desktop:** WASD to move, the mouse to aim, click (or hold) to shoot. Hold Space, E or right-click to aim the super, then release to fire it. Q uses your kill-streak ability.
+- **Touch:** the left half of the screen is a floating move stick. On the right half, drag and release to shoot, or tap to auto-aim. Drag the yellow button to fire the super; tap the round ability button next to it.
+
+## Kill rewards and customization
+
+- Every knockout drops the victim's finger (plus any extra fingers they had collected). Picking one up adds a finger to your gun, up to 4 (the whole hand opens): each finger fires one more bullet in a narrow fan.
+- Kills build a streak (reset on death) that adds damage and max HP and unlocks abilities: Dash at 2, Shield at 4, Rapid Fire at 6. The ability button uses the best one that is ready.
+- **Customize** on the menu picks your hand colour and a thumb topper; the choice is saved in the browser.
 
 ## How it's built
 

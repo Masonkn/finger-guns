@@ -10,6 +10,7 @@ export interface PlayerIntent {
   fire: boolean;
   superFire: boolean;
   autoAim: boolean; // fire at the nearest target instead of aimX/aimY
+  ability: boolean; // use the current kill-streak ability
 }
 
 interface Stick {
@@ -27,15 +28,16 @@ const DEADZONE = 18; // px a stick must move before it counts as aiming
 
 /**
  * Desktop: WASD/arrows to move, mouse to aim, click (hold) to shoot,
- * hold Space, E or right mouse to aim the super and release to fire it.
+ * hold Space, E or right mouse to aim the super and release to fire it, Q for the ability.
  * Touch: left half is a floating move stick, right half is the attack stick
- * (drag to aim, release to shoot, tap to auto-aim), plus a super button.
+ * (drag to aim, release to shoot, tap to auto-aim), plus super and ability buttons.
  */
 export class Input {
   private keys = new Set<string>();
   private mouse = { x: 0, y: 0, inside: false, down: false };
   private superHeld = false;
   private superReleased = false;
+  private abilityPressed = false;
   private touchMode = false;
   private moveStick: Stick | null = null;
   private attackStick: Stick | null = null;
@@ -46,11 +48,13 @@ export class Input {
     private scene: GameScene,
     private root: HTMLElement,
     superButton: HTMLElement,
+    abilityButton: HTMLElement,
   ) {
     const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement;
     window.addEventListener('keydown', (e) => {
       if (e.repeat || typing(e)) return;
       this.keys.add(e.code);
+      if (e.code === 'KeyQ') this.abilityPressed = true;
       if (e.code === 'Space' || e.code === 'KeyE') {
         this.superHeld = true;
         e.preventDefault();
@@ -85,6 +89,14 @@ export class Input {
       this.touchMode = true;
       this.superStick = this.makeStick(e, false);
     });
+    // A tap, not a stick: abilities need no aiming (dash goes the way you're moving).
+    abilityButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (e.pointerType !== 'mouse') this.touchMode = true;
+      this.abilityPressed = true;
+    });
+    abilityButton.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
   setScene(scene: GameScene) {
@@ -107,6 +119,7 @@ export class Input {
       fire: false,
       superFire: false,
       autoAim: false,
+      ability: false,
     };
 
     // Movement.
@@ -160,6 +173,8 @@ export class Input {
       if (this.superReleased) intent.superFire = true;
     }
     this.superReleased = false;
+    intent.ability = this.abilityPressed;
+    this.abilityPressed = false;
     return intent;
   }
 

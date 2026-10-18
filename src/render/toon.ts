@@ -93,24 +93,78 @@ export function addFade(material: THREE.Material, uniforms: FadeUniforms) {
   material.customProgramCacheKey = () => 'fade';
 }
 
+// --- Wind sway -------------------------------------------------------------------
+// Bends instanced geometry (grass blades) more toward the tip, phase-shifted per instance.
+
+export interface SwayUniforms {
+  uSwayTime: { value: number };
+  uSwayAmount: { value: number };
+}
+
+export function makeSwayUniforms(amount: number): SwayUniforms {
+  return { uSwayTime: { value: 0 }, uSwayAmount: { value: amount } };
+}
+
+const SWAY_PARS = /* glsl */ `
+  uniform float uSwayTime;
+  uniform float uSwayAmount;
+`;
+
+const SWAY_VERTEX = /* glsl */ `
+  {
+    vec2 swayBase = vec2(0.0);
+    #ifdef USE_INSTANCING
+      swayBase = vec2(instanceMatrix[3].x, instanceMatrix[3].z);
+    #endif
+    float swayH = max(position.y, 0.0);
+    float swayK = swayH * swayH * uSwayAmount;
+    float wave = uSwayTime * 1.7 + swayBase.x * 0.55 + swayBase.y * 0.35;
+    transformed.x += (sin(wave) + 0.35 * sin(wave * 2.3 + swayBase.y)) * swayK;
+    transformed.z += cos(wave * 0.8 + swayBase.x) * swayK * 0.6;
+  }
+`;
+
+/** Adds sway to a built-in material. Call after addFade (it chains onBeforeCompile). */
+export function addSway(material: THREE.Material, uniforms: SwayUniforms) {
+  const prev = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    prev(shader, renderer);
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${SWAY_PARS}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${SWAY_VERTEX}`);
+  };
+  const prevKey = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${prevKey()}-sway`;
+}
+
 // --- Outlines ----------------------------------------------------------------
 
-export function outlineMaterial(thickness = 0.035, color = 0x1a1422, fade?: FadeUniforms) {
+export function outlineMaterial(thickness = 0.035, color = 0x1a1422, fade?: FadeUniforms, sway?: SwayUniforms) {
   const fadeDefine = fade ? '#define USE_FADE\n' : '';
+  const swayDefine = sway ? '#define USE_SWAY\n' : '';
   return new THREE.ShaderMaterial({
     uniforms: {
       thickness: { value: thickness },
       color: { value: new THREE.Color(color) },
       ...(fade ?? {}),
+      ...(sway ?? {}),
     },
     vertexShader: /* glsl */ `
       ${fadeDefine}
+      ${swayDefine}
       uniform float thickness;
       #ifdef USE_FADE
         varying vec3 vFadeWorld;
       #endif
+      #ifdef USE_SWAY
+        ${SWAY_PARS}
+      #endif
       void main() {
         vec3 transformed = position + normal * thickness;
+        #ifdef USE_SWAY
+          ${SWAY_VERTEX}
+        #endif
         vec4 local = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING
           local = instanceMatrix * local;

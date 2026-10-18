@@ -7,8 +7,12 @@ import {
   ClientMessage,
   LobbyPlayer,
   ServerMessage,
+  FX_DASH,
+  FX_RAPID,
+  FX_SHIELD,
   Snapshot,
   TICK,
+  WireLook,
   round,
 } from '../src/net/protocol';
 
@@ -23,6 +27,7 @@ type InputMessage = Extract<ClientMessage, { t: 'input' }>;
 export interface Client {
   ws: WebSocket;
   name: string;
+  look: WireLook | null;
   room: Room | null;
   brawlerId: number | null;
   inputs: InputMessage[];
@@ -98,9 +103,10 @@ export class Room {
     if (this.state !== 'playing') return;
     client.inputs.push(msg);
     while (client.inputs.length > MAX_QUEUED_INPUTS) {
-      // Drop the oldest, but never lose a super press.
+      // Drop the oldest, but never lose a super or ability press.
       const dropped = client.inputs.shift()!;
       if (dropped.s) client.inputs[0].s = 1;
+      if (dropped.q) client.inputs[0].q = 1;
       client.ackSeq = Math.max(client.ackSeq, dropped.seq);
     }
   }
@@ -149,7 +155,9 @@ export class Room {
       if (o.client) o.client.brawlerId = this.world!.brawlers[i].id;
     });
     this.state = 'playing';
-    const players = this.world.brawlers.map((b) => ({ id: b.id, name: b.name }));
+    const looks = new Map<number, WireLook | null>();
+    order.forEach((o, i) => looks.set(this.world!.brawlers[i].id, o.client?.look ?? null));
+    const players = this.world.brawlers.map((b) => ({ id: b.id, name: b.name, look: looks.get(b.id) ?? null }));
     for (const c of this.clients) send(c.ws, { t: 'start', seed, you: c.brawlerId!, players });
   }
 
@@ -165,6 +173,7 @@ export class Room {
       c.moveCredit = Math.min(MAX_MOVE_CREDIT, c.moveCredit + 1);
       let fire = false;
       let superFire = false;
+      let ability = false;
       let consumed = false;
       while (c.inputs.length > 0 && c.moveCredit >= 1) {
         const input = c.inputs.shift()!;
@@ -172,9 +181,11 @@ export class Room {
         c.ackSeq = input.seq;
         c.last = input;
         consumed = true;
-        if (me.alive) world.moveBody(me, input.mx, input.my, TICK);
+        // A dash carries the hand on its own, so walking input pauses until it ends.
+        if (me.alive && !world.isDashing(me)) world.moveBody(me, input.mx, input.my, TICK);
         fire ||= input.f === 1;
         superFire ||= input.s === 1;
+        ability ||= input.q === 1;
       }
       const use = c.last;
       if (!use) continue;
@@ -185,6 +196,7 @@ export class Room {
         aimY: use.ay,
         fire,
         superFire,
+        ability: ability ? 'auto' : null,
         skipMove: true,
       });
     }
@@ -232,10 +244,15 @@ export class Room {
         mhp: o.maxHp,
         cubes: o.cubes,
         bush: o.inBush ? 1 : 0,
+        stk: o.streak,
+        fg: o.extraFingers,
+        fx: (world.isShielded(o) ? FX_SHIELD : 0) | (world.isRapidFiring(o) ? FX_RAPID : 0) | (world.isDashing(o) ? FX_DASH : 0),
       };
       if (o === me) {
         s.ammo = round(o.ammo, 3);
         s.sup = round(o.superCharge, 3);
+        s.ar = [round(o.abilityReadyAt.dash, 3), round(o.abilityReadyAt.shield, 3), round(o.abilityReadyAt.rapidFire, 3)];
+        s.al = round(o.abilityLockUntil, 3);
       }
       b.push(s);
     }
@@ -256,6 +273,7 @@ export class Room {
         sup: u.isSuper ? 1 : 0,
       })),
       cubes: world.cubes.map((k) => [k.id, round(k.x), round(k.y)]),
+      fingers: world.fingers.map((f) => [f.id, round(f.x), round(f.y), f.fromId]),
       ev: events,
     });
   }

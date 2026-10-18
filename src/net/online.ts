@@ -1,9 +1,10 @@
 import type { Match, MatchResult } from '../game/match';
 import type { PlayerIntent } from '../input';
-import { BRAWLER, BULLET, SUPER } from '../sim/config';
+import { type PlayerLook, isTopperId, randomLook } from '../render/cosmetics';
+import { BRAWLER, BULLET, RAPID_FIRE_SHOT_COOLDOWN, SUPER } from '../sim/config';
 import { Brawler, Point, World } from '../sim/world';
 import type { Connection } from './connection';
-import { ClientMessage, ServerMessage, Snapshot, TICK } from './protocol';
+import { ClientMessage, FX_DASH, FX_RAPID, FX_SHIELD, ServerMessage, Snapshot, TICK } from './protocol';
 
 // How far behind the newest snapshot other players are drawn, so there are
 // always two snapshots to blend between even when packets arrive unevenly.
@@ -40,6 +41,8 @@ export class OnlineMatch implements Match {
   private acc = 0;
   private wantFire = false;
   private wantSuper = false;
+  private wantAbility = false;
+  private looks = new Map<number, PlayerLook>();
   private predictedAmmo: number = BRAWLER.maxAmmo;
   private lastLocalShot = -10;
 
@@ -56,6 +59,11 @@ export class OnlineMatch implements Match {
       if (this.world.brawlers[i].id !== p.id) throw new Error('Arena mismatch with server');
     });
     this.playerId = start.you;
+    // Bots (and anyone who sent no look) get a random one; it only has to look varied.
+    for (const p of start.players) {
+      const look = p.look && isTopperId(p.look.topper) ? { color: p.look.color, topper: p.look.topper } : randomLook();
+      this.looks.set(p.id, look);
+    }
     const me = this.me;
     this.pred = { x: me.x, y: me.y };
     this.prevPred = { ...this.pred };
@@ -70,6 +78,10 @@ export class OnlineMatch implements Match {
     return b.id === this.playerId || !this.me.alive || this.visibleIds.has(b.id);
   }
 
+  lookOf(b: Brawler): PlayerLook {
+    return this.looks.get(b.id) ?? randomLook();
+  }
+
   handle(msg: ServerMessage) {
     if (msg.t === 'snap') this.onSnapshot(msg);
     else if (msg.t === 'result') this.result = { rank: msg.rank, kills: msg.kills, cubes: msg.cubes, winner: msg.winner };
@@ -82,6 +94,7 @@ export class OnlineMatch implements Match {
     // Latch one-shot actions until the next input tick goes out.
     if (intent.fire) this.wantFire = true;
     if (intent.superFire) this.wantSuper = true;
+    if (intent.ability) this.wantAbility = true;
 
     this.acc += dt;
     while (this.acc >= TICK) {
@@ -95,14 +108,17 @@ export class OnlineMatch implements Match {
         ay: round3(intent.aimY),
         f: this.wantFire ? 1 : 0,
         s: this.wantSuper ? 1 : 0,
+        q: this.wantAbility ? 1 : 0,
       };
       this.wantFire = false;
       this.wantSuper = false;
+      this.wantAbility = false;
       this.conn.send(input);
       this.pending.push(input);
       this.prevPred = { ...this.pred };
       if (me.alive) {
-        this.world.moveBody(this.pred, input.mx, input.my, TICK);
+        // While dashing the server moves the hand; reconcile picks up where it lands.
+        if (!this.world.isDashing(me)) this.world.moveBody(this.pred, input.mx, input.my, TICK);
         this.predictShot(input, now);
       }
     }
@@ -133,9 +149,14 @@ export class OnlineMatch implements Match {
       this.world.events.push({ type: 'shot', brawlerId: me.id, isSuper: true });
       me.superCharge = 0;
       this.lastLocalShot = now;
-    } else if (input.f && this.predictedAmmo >= 1 && now - this.lastLocalShot >= BRAWLER.shotCooldown) {
+      return;
+    }
+    // Rapid fire shoots faster and uses no ammo.
+    const rapid = this.world.isRapidFiring(me);
+    const cooldown = rapid ? RAPID_FIRE_SHOT_COOLDOWN : BRAWLER.shotCooldown;
+    if (input.f && (rapid || this.predictedAmmo >= 1) && now - this.lastLocalShot >= cooldown) {
       this.world.events.push({ type: 'shot', brawlerId: me.id, isSuper: false });
-      this.predictedAmmo -= 1;
+      if (!rapid) this.predictedAmmo -= 1;
       me.ammo = this.predictedAmmo;
       this.lastLocalShot = now;
     }
@@ -164,18 +185,27 @@ export class OnlineMatch implements Match {
       b.maxHp = s.mhp;
       b.cubes = s.cubes;
       b.inBush = s.bush === 1;
+      b.streak = s.stk;
+      b.extraFingers = s.fg;
+      // Effects arrive as on/off flags; open-ended times keep the World checks working.
+      b.shieldUntil = s.fx & FX_SHIELD ? Infinity : 0;
+      b.rapidUntil = s.fx & FX_RAPID ? Infinity : 0;
+      b.dashUntil = s.fx & FX_DASH ? Infinity : 0;
       if (s.id !== this.playerId) {
         b.moveX = s.mx;
         b.moveY = s.my;
         continue;
       }
       b.superCharge = s.sup ?? 0;
+      if (s.ar) b.abilityReadyAt = { dash: s.ar[0], shield: s.ar[1], rapidFire: s.ar[2] };
+      b.abilityLockUntil = s.al ?? 0;
       this.predictedAmmo = s.ammo ?? 0;
       b.ammo = this.predictedAmmo;
       this.reconcile(s.x, s.y, snap.ack);
     }
 
     w.cubes = snap.cubes.map(([id, x, y]) => ({ id, x, y, alive: true }));
+    w.fingers = snap.fingers.map(([id, x, y, fromId]) => ({ id, x, y, fromId, alive: true }));
 
     for (const e of snap.ev) {
       if (e.type === 'shot' && e.brawlerId === this.playerId) continue; // already shown locally
@@ -257,6 +287,7 @@ export class OnlineMatch implements Match {
         range: 0,
         damage: 0,
         isSuper: u.sup === 1,
+        chargeShare: 0,
         alive: true,
       };
     });

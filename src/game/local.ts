@@ -1,4 +1,5 @@
 import type { PlayerIntent } from '../input';
+import { type PlayerLook, randomLook } from '../render/cosmetics';
 import { PLAYER_COUNT } from '../sim/config';
 import { BotBrain } from '../sim/bot';
 import { Brawler, Command, World } from '../sim/world';
@@ -13,8 +14,9 @@ export class LocalMatch implements Match {
   readonly playerId: number;
   private bots: BotBrain;
   private acc = 0;
+  private looks = new Map<number, PlayerLook>();
 
-  constructor(name: string) {
+  constructor(name: string, look: PlayerLook) {
     const bots = shuffle(BOT_NAMES).slice(0, PLAYER_COUNT - 1);
     this.world = new World(Math.floor(Math.random() * 1e9), [
       { name, isBot: false },
@@ -22,6 +24,11 @@ export class LocalMatch implements Match {
     ]);
     this.playerId = this.world.brawlers[0].id;
     this.bots = new BotBrain(this.world);
+    for (const b of this.world.brawlers) this.looks.set(b.id, b.id === this.playerId ? look : randomLook());
+  }
+
+  lookOf(b: Brawler): PlayerLook {
+    return this.looks.get(b.id)!;
   }
 
   isVisible(b: Brawler): boolean {
@@ -48,6 +55,7 @@ export class LocalMatch implements Match {
         aimY: intent.aimY,
         fire: intent.fire && firstStep,
         superFire: intent.superFire && firstStep,
+        ability: intent.ability && firstStep ? 'auto' : null,
       });
       firstStep = false;
       world.step(STEP, commands);

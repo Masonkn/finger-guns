@@ -3,6 +3,8 @@ import { LocalMatch } from './game/local';
 import type { Match } from './game/match';
 import { Hud } from './hud';
 import { Input } from './input';
+import { CustomizePanel } from './customize';
+import { loadLook } from './render/cosmetics';
 import { Connection } from './net/connection';
 import { OnlineMatch } from './net/online';
 import { BULLET, PLAYER_COUNT, SUPER } from './sim/config';
@@ -14,11 +16,17 @@ const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)
 const canvas = $<HTMLCanvasElement>('#game');
 const hudRoot = $('#hud');
 const superButton = $('#super');
+const abilityButton = $('#ability');
 const screens = { menu: $('#menu'), lobby: $('#lobby'), end: $('#end') };
 const nameInput = $<HTMLInputElement>('#name');
 const codeInput = $<HTMLInputElement>('#code');
 const menuError = $('#menu-error');
 const renderer = createRenderer(canvas);
+let playerLook = loadLook();
+const customizeRoot = document.querySelector<HTMLElement>('#customize')!;
+const customize = new CustomizePanel(customizeRoot, playerLook, (look) => {
+  playerLook = look;
+});
 
 type Mode = { kind: 'bots' } | { kind: 'quick' } | { kind: 'create' } | { kind: 'code'; code: string };
 
@@ -93,10 +101,10 @@ function disconnect() {
 function beginMatch(match: Match, mode: Mode) {
   stopMatch();
   const visible = match.isVisible.bind(match);
-  const scene = new GameScene(renderer, match.world, match.playerId, visible);
-  if (!input) input = new Input(scene, hudRoot, superButton);
+  const scene = new GameScene(renderer, match.world, match.playerId, visible, match.lookOf.bind(match));
+  if (!input) input = new Input(scene, hudRoot, superButton, abilityButton);
   else input.setScene(scene);
-  const hud = new Hud(hudRoot, match.world, scene, match.playerId, superButton, visible);
+  const hud = new Hud(hudRoot, match.world, scene, match.playerId, superButton, abilityButton, visible);
   running = { match, scene, hud, mode, overAt: null };
   show(null);
   // ?debug exposes the running match for poking at from the console (and from tests).
@@ -127,8 +135,9 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
     if (running?.match instanceof OnlineMatch && running.match.result) return; // match already decided
     showMenu('Lost connection to the game server.');
   };
-  if (mode.kind === 'code') c.send({ t: 'join', name, mode: 'code', code: mode.code });
-  else c.send({ t: 'join', name, mode: mode.kind });
+  const look = { color: playerLook.color, topper: playerLook.topper };
+  if (mode.kind === 'code') c.send({ t: 'join', name, look, mode: 'code', code: mode.code });
+  else c.send({ t: 'join', name, look, mode: mode.kind });
 }
 
 function onServerMessage(c: Connection, msg: ServerMessage, mode: Mode) {
@@ -190,7 +199,7 @@ $('#copy-link').addEventListener('click', async (e) => {
 function startMode(mode: Mode) {
   if (mode.kind === 'bots') {
     disconnect();
-    beginMatch(new LocalMatch(currentName()), mode);
+    beginMatch(new LocalMatch(currentName(), playerLook), mode);
   } else {
     void playOnline(mode);
   }
@@ -260,7 +269,9 @@ function frame(now: number) {
   match.update(dt, intent);
 
   for (const e of world.events) {
-    if (e.type === 'hit') hud.damagePopup(e.x, e.y, e.damage, e.targetId === player.id);
+    if (e.type === 'hit') hud.damagePopup(e.x, e.y, e.damage, e.targetId === player.id, e.blocked);
+    if (e.type === 'abilityUnlock' && e.brawlerId === player.id) hud.abilityUnlocked(e.ability);
+    if (e.type === 'fingerPickup' && e.brawlerId === player.id) hud.announce(`${e.fingers}-finger gun!`, 1.6);
   }
   scene.render(dt, { x: intent.aimX, y: intent.aimY, active: intent.aimActive, isSuper: intent.superAiming });
   world.events.length = 0;
@@ -268,7 +279,7 @@ function frame(now: number) {
 
   const result = match.result;
   if (result && running.overAt === null) running.overAt = now;
-  if (result && running.overAt !== null && now - running.overAt > 1400 && screens.end.hidden) {
+  if (result && running.overAt !== null && now - running.overAt > 1400 && screens.end.hidden && customizeRoot.hidden) {
     const title = $('.end-rank');
     title.textContent = result.rank === 1 ? 'Winner!' : `#${result.rank}`;
     title.classList.toggle('end-win', result.rank === 1);
@@ -280,4 +291,10 @@ function frame(now: number) {
 }
 
 window.addEventListener('resize', () => running?.scene.resize());
+document.querySelectorAll<HTMLElement>('[data-customize]').forEach((b) =>
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    customize.open(b.closest<HTMLElement>('.screen')!);
+  }),
+);
 requestAnimationFrame(frame);

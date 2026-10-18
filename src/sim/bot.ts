@@ -1,5 +1,6 @@
-import { BRAWLER, BULLET, MAP_SIZE } from './config';
+import { BRAWLER, BULLET, FINGERS, MAP_SIZE } from './config';
 import { Tile } from './map';
+import { fingerCount } from './world';
 import type { Brawler, Command, World } from './world';
 
 interface BotMemory {
@@ -57,10 +58,37 @@ export class BotBrain {
     const target = m.targetId !== null ? this.world.brawlers.find((b) => b.id === m.targetId) : undefined;
     if (target && target.alive && this.world.canSee(bot, target)) {
       this.fight(bot, target, m, cmd);
+      this.useAbilities(bot, target, m, cmd);
     } else {
       this.shootCrateIfClose(bot, m, cmd);
     }
     return cmd;
+  }
+
+  /** Simple ability rules: dash away when low, shield under fire, rapid fire up close. */
+  private useAbilities(bot: Brawler, target: Brawler, m: BotMemory, cmd: Command) {
+    const w = this.world;
+    const d = Math.hypot(target.x - bot.x, target.y - bot.y);
+    if (w.abilityReady(bot, 'dash') && bot.hp < bot.maxHp * 0.35 && d < 6) {
+      if (m.path.length === 0) {
+        // No escape route planned: dash straight away from the threat, sliding along the zone.
+        cmd.moveX = (bot.x - target.x) / (d || 1);
+        cmd.moveY = (bot.y - target.y) / (d || 1);
+        if (w.isOutsideZone(bot.x + cmd.moveX * 3, bot.y + cmd.moveY * 3, 0.5)) {
+          cmd.moveX = MAP_SIZE / 2 - bot.x;
+          cmd.moveY = MAP_SIZE / 2 - bot.y;
+        }
+      }
+      cmd.ability = 'dash';
+    } else if (w.abilityReady(bot, 'shield') && w.time - bot.lastHitAt < 0.2) {
+      cmd.ability = 'shield';
+    } else if (
+      w.abilityReady(bot, 'rapidFire') &&
+      d < 5 &&
+      w.hasLineOfSight(bot.x, bot.y, target.x, target.y)
+    ) {
+      cmd.ability = 'rapidFire';
+    }
   }
 
   private think(bot: Brawler, m: BotMemory) {
@@ -97,10 +125,11 @@ export class BotBrain {
       return;
     }
 
-    // 3. Grab nearby cubes.
+    // 3. Grab nearby cubes and dropped fingers.
     let bestCube: { x: number; y: number } | null = null;
     let bestD = 12;
-    for (const c of w.cubes) {
+    const wantsFingers = fingerCount(bot) < FINGERS.max;
+    for (const c of wantsFingers ? [...w.cubes, ...w.fingers] : w.cubes) {
       const d = Math.hypot(c.x - bot.x, c.y - bot.y);
       if (d < bestD && !w.isOutsideZone(c.x, c.y, 1)) {
         bestD = d;
@@ -189,6 +218,9 @@ export class BotBrain {
     if (!los) return;
     if (bot.superCharge >= 1 && d < 6) {
       cmd.superFire = true;
+    } else if (w.isRapidFiring(bot) && d < BULLET.range * 0.95 && m.fireDelay <= 0) {
+      cmd.fire = true;
+      m.fireDelay = 0.2 + Math.random() * 0.1;
     } else if (d < BULLET.range * 0.95 && m.fireDelay <= 0 && bot.ammo >= 1) {
       cmd.fire = true;
       m.fireDelay = 0.55 + Math.random() * 0.6;
