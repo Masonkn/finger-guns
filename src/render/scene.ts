@@ -43,6 +43,7 @@ export class GameScene {
     readonly renderer: THREE.WebGLRenderer,
     private world: World,
     private playerId: number,
+    private isVisible: (b: Brawler) => boolean,
   ) {
     this.scene.background = new THREE.Color(0x1d2b4f);
 
@@ -165,7 +166,7 @@ export class GameScene {
         hand.die();
       }
       const moving = Math.hypot(b.moveX, b.moveY) > 0.1;
-      const hidden = b.id !== this.playerId && !w.canSee(player, b) && player.alive;
+      const hidden = !this.isVisible(b);
       hand.update(dt, b.x, b.y, b.facing, moving, hidden);
     }
 

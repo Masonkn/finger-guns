@@ -9,6 +9,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -193,7 +194,8 @@ html, body {
   position: fixed;
   inset: 0;
   display: grid;
-  place-items: center;
+  place-items: safe center;
+  overflow-y: auto;
   padding: 16px;
   background: radial-gradient(circle at 50% 30%, rgba(60, 80, 200, 0.55), rgba(10, 8, 30, 0.85));
 }
@@ -254,3 +256,37 @@ html, body {
 }
 .end-rank.end-win { color: var(--super); }
 .end-sub { margin: 10px 0 20px; font-size: 20px; color: #c9cdfc; }
+
+/* Menu additions */
+.field { display: grid; gap: 6px; margin: 0 auto 16px; max-width: 280px; text-align: left; font-size: 15px; color: #c9cdfc; }
+.field input, .join-form input {
+  font: inherit;
+  font-size: 20px;
+  color: var(--ink);
+  background: #fff;
+  border: 4px solid var(--ink);
+  border-radius: 12px;
+  padding: 6px 12px;
+  width: 100%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.field input:focus-visible, .join-form input:focus-visible { outline: 3px solid var(--super); outline-offset: 2px; }
+.menu-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.btn-alt { background: linear-gradient(#7fd0ff, #3a8cff); }
+.btn-small { font-size: 17px; padding: 6px 16px; border-width: 3px; box-shadow: 0 4px 0 var(--ink); -webkit-text-stroke: 3px var(--ink); }
+.btn:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+.private-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; margin-top: 16px; }
+.join-form { display: flex; gap: 8px; }
+.join-form input { width: 96px; text-transform: uppercase; text-align: center; letter-spacing: 0.15em; font-size: 17px; }
+.menu-error { min-height: 1.2em; margin: 10px 0 0; color: #ff8f99; font-family: system-ui, sans-serif; font-size: 14px; }
+
+.lobby-title { font-size: 34px; -webkit-text-stroke: 6px var(--ink); paint-order: stroke fill; margin-bottom: 10px; }
+.lobby-code { display: grid; gap: 4px; justify-items: center; margin-bottom: 12px; color: #c9cdfc; }
+.lobby-code[hidden] { display: none; }
+.lobby-code strong { font-weight: 400; font-size: 52px; letter-spacing: 0.12em; color: var(--super); -webkit-text-stroke: 7px var(--ink); paint-order: stroke fill; }
+.lobby-status { font-size: 18px; color: #c9cdfc; margin-bottom: 12px; }
+.lobby-players { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.lobby-players li { background: rgba(20, 16, 40, 0.5); border: 3px solid var(--ink); border-radius: 10px; padding: 3px 12px; font-size: 16px; }
+.lobby-players li.you { color: var(--me); }
+.lobby-players li.empty { color: #6d6f9c; border-style: dashed; }
