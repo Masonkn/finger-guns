@@ -93,3 +93,32 @@ export const ABILITY_ORDER: AbilityKind[] = ['rapidFire', 'shield', 'dash']; // 
 export const ABILITY_LOCKOUT = 0.6; // seconds after any ability before another can start
 export const DASH_SPEED_MULTIPLIER = 3.2; // 0.25s at 3.2x speed is about 2.9 tiles
 export const RAPID_FIRE_SHOT_COOLDOWN = 0.2; // replaces BRAWLER.shotCooldown; ammo is not used
+
+// --- Bot difficulty ----------------------------------------------------------
+
+export type BotDifficulty = 0 | 1 | 2 | 3;
+export const BOT_DIFFICULTY_NAMES = ['Very easy', 'Easy', 'Normal', 'Hard'];
+export const DEFAULT_BOT_DIFFICULTY: BotDifficulty = 2;
+
+export function isBotDifficulty(n: unknown): n is BotDifficulty {
+  return n === 0 || n === 1 || n === 2 || n === 3;
+}
+
+/** How bots play at each level. Normal is how they played before levels existed. */
+export const BOT_SKILL: Record<
+  BotDifficulty,
+  {
+    aimError: [min: number, max: number]; // radians of random aim wobble per shot
+    lead: number; // how much of a moving target's path they aim ahead of
+    fireDelay: number; // multiplies the pause between shots
+    thinkInterval: number; // seconds between decisions, so how fast they react
+    engageDistance: [min: number, max: number]; // how far away they pick fights
+    usesSuper: boolean;
+    usesAbilities: boolean;
+  }
+> = {
+  0: { aimError: [0.45, 0.65], lead: 0, fireDelay: 2.4, thinkInterval: 0.7, engageDistance: [4, 5], usesSuper: false, usesAbilities: false },
+  1: { aimError: [0.28, 0.42], lead: 0.3, fireDelay: 1.6, thinkInterval: 0.45, engageDistance: [5, 7], usesSuper: true, usesAbilities: false },
+  2: { aimError: [0.12, 0.3], lead: 0.7, fireDelay: 1, thinkInterval: 0.25, engageDistance: [6, 9], usesSuper: true, usesAbilities: true },
+  3: { aimError: [0.05, 0.14], lead: 0.95, fireDelay: 0.75, thinkInterval: 0.15, engageDistance: [7.5, 9.5], usesSuper: true, usesAbilities: true },
+};

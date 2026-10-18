@@ -1,4 +1,4 @@
-import { BRAWLER, BULLET, FINGERS, MAP_SIZE } from './config';
+import { BOT_SKILL, BRAWLER, BULLET, BotDifficulty, DEFAULT_BOT_DIFFICULTY, FINGERS, MAP_SIZE } from './config';
 import { Tile } from './map';
 import { fingerCount } from './world';
 import type { Brawler, Command, World } from './world';
@@ -15,7 +15,6 @@ interface BotMemory {
   lastSeen: { x: number; y: number; at: number } | null;
 }
 
-const THINK_INTERVAL = 0.25;
 // Early on bots mostly loot, like players do in Showdown.
 const LOOT_PHASE = 25;
 
@@ -25,21 +24,28 @@ const LOOT_PHASE = 25;
  */
 export class BotBrain {
   private memory = new Map<number, BotMemory>();
+  private skill: (typeof BOT_SKILL)[BotDifficulty];
 
-  constructor(private world: World) {}
+  constructor(
+    private world: World,
+    difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY,
+  ) {
+    this.skill = BOT_SKILL[difficulty];
+  }
 
   command(bot: Brawler, dt: number): Command {
     let m = this.memory.get(bot.id);
+    const skill = this.skill;
     if (!m) {
       m = {
-        thinkIn: Math.random() * THINK_INTERVAL,
+        thinkIn: Math.random() * skill.thinkInterval,
         goal: null,
         path: [],
         targetId: null,
         strafe: Math.random() < 0.5 ? 1 : -1,
         fireDelay: 0,
-        aimError: 0.12 + Math.random() * 0.18,
-        engageDistance: 6 + Math.random() * 3,
+        aimError: between(skill.aimError),
+        engageDistance: between(skill.engageDistance),
         lastSeen: null,
       };
       this.memory.set(bot.id, m);
@@ -48,7 +54,7 @@ export class BotBrain {
     m.thinkIn -= dt;
     m.fireDelay -= dt;
     if (m.thinkIn <= 0) {
-      m.thinkIn = THINK_INTERVAL;
+      m.thinkIn = skill.thinkInterval;
       this.think(bot, m);
     }
 
@@ -58,7 +64,7 @@ export class BotBrain {
     const target = m.targetId !== null ? this.world.brawlers.find((b) => b.id === m.targetId) : undefined;
     if (target && target.alive && this.world.canSee(bot, target)) {
       this.fight(bot, target, m, cmd);
-      this.useAbilities(bot, target, m, cmd);
+      if (skill.usesAbilities) this.useAbilities(bot, target, m, cmd);
     } else {
       this.shootCrateIfClose(bot, m, cmd);
     }
@@ -205,8 +211,9 @@ export class BotBrain {
 
     // Lead the shot a little, then add personal aim error.
     const t = d / BULLET.speed;
-    const lx = target.x + target.moveX * BRAWLER.speed * t * 0.7 - bot.x;
-    const ly = target.y + target.moveY * BRAWLER.speed * t * 0.7 - bot.y;
+    const lead = this.skill.lead;
+    const lx = target.x + target.moveX * BRAWLER.speed * t * lead - bot.x;
+    const ly = target.y + target.moveY * BRAWLER.speed * t * lead - bot.y;
     const a = Math.atan2(ly, lx) + (Math.random() * 2 - 1) * m.aimError;
     cmd.aimX = Math.cos(a);
     cmd.aimY = Math.sin(a);
@@ -227,14 +234,14 @@ export class BotBrain {
 
     const los = w.hasLineOfSight(bot.x, bot.y, target.x, target.y);
     if (!los) return;
-    if (bot.superCharge >= 1 && d < 6) {
+    if (this.skill.usesSuper && bot.superCharge >= 1 && d < 6) {
       cmd.superFire = true;
     } else if (w.isRapidFiring(bot) && d < BULLET.range * 0.95 && m.fireDelay <= 0) {
       cmd.fire = true;
-      m.fireDelay = 0.2 + Math.random() * 0.1;
+      m.fireDelay = (0.2 + Math.random() * 0.1) * this.skill.fireDelay;
     } else if (d < BULLET.range * 0.95 && m.fireDelay <= 0 && bot.ammo >= 1) {
       cmd.fire = true;
-      m.fireDelay = 0.55 + Math.random() * 0.6;
+      m.fireDelay = (0.55 + Math.random() * 0.6) * this.skill.fireDelay;
     }
   }
 
@@ -358,4 +365,8 @@ export class BotBrain {
     path.reverse();
     return path;
   }
+}
+
+function between([min, max]: [number, number]): number {
+  return min + Math.random() * (max - min);
 }

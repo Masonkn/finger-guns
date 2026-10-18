@@ -7,7 +7,20 @@ import { CustomizePanel } from './customize';
 import { loadLook } from './render/cosmetics';
 import { Connection } from './net/connection';
 import { OnlineMatch } from './net/online';
-import { BULLET, PLAYER_COUNT, SUPER, TEAM_MODE_NAMES, TEAM_SIZES, TeamSize, isTeamSize, teamCount } from './sim/config';
+import {
+  BOT_DIFFICULTY_NAMES,
+  BULLET,
+  BotDifficulty,
+  DEFAULT_BOT_DIFFICULTY,
+  PLAYER_COUNT,
+  SUPER,
+  TEAM_MODE_NAMES,
+  TEAM_SIZES,
+  TeamSize,
+  isBotDifficulty,
+  isTeamSize,
+  teamCount,
+} from './sim/config';
 import { type LobbyPlayer, type ServerMessage, cleanName } from './net/protocol';
 import { GameScene, createRenderer } from './render/scene';
 
@@ -122,6 +135,7 @@ function beginMatch(match: Match, mode: Mode) {
 
 // Everyone passes through the lobby before a match: pick solo or a team size, see who's in.
 let teamSize: TeamSize = loadTeamSize();
+let difficulty: BotDifficulty = loadDifficulty();
 let lobbyMode: Mode | null = null; // the lobby on screen, if any
 let lastLobby: LobbyMessage | null = null;
 
@@ -145,6 +159,24 @@ function saveTeamSize(size: TeamSize) {
   }
 }
 
+function loadDifficulty(): BotDifficulty {
+  try {
+    const n = Number(localStorage.getItem('fg-bot-difficulty') ?? DEFAULT_BOT_DIFFICULTY);
+    return isBotDifficulty(n) ? n : DEFAULT_BOT_DIFFICULTY;
+  } catch {
+    return DEFAULT_BOT_DIFFICULTY;
+  }
+}
+
+function saveDifficulty(level: BotDifficulty) {
+  difficulty = level;
+  try {
+    localStorage.setItem('fg-bot-difficulty', String(level));
+  } catch {
+    // Not remembered in private mode.
+  }
+}
+
 interface LobbyView {
   title: string;
   code: string | null;
@@ -155,6 +187,8 @@ interface LobbyView {
   startLabel: string;
   canPickMode: boolean;
   canPickTeam: boolean;
+  difficulty: BotDifficulty | null; // null hides the slider (public matches always use Normal bots)
+  canPickDifficulty: boolean;
 }
 
 function openBotsLobby() {
@@ -176,6 +210,8 @@ function renderBotsLobby() {
     startLabel: 'START',
     canPickMode: true,
     canPickTeam: false,
+    difficulty,
+    canPickDifficulty: true,
   });
 }
 
@@ -199,6 +235,8 @@ function renderServerLobby(msg: LobbyMessage, status?: string) {
     // Public lobbies are split by mode, so picking one moves you to that queue.
     canPickMode: msg.code === null || msg.canStart,
     canPickTeam: msg.teamSize > 1 && !status,
+    difficulty: msg.code ? msg.difficulty : null,
+    canPickDifficulty: msg.canStart,
   });
 }
 
@@ -210,6 +248,12 @@ function renderLobby(v: LobbyView) {
   start.hidden = !v.canStart;
   start.textContent = v.startLabel;
   $('#lobby-status').textContent = v.status;
+  $('#lobby-difficulty').hidden = v.difficulty === null;
+  if (v.difficulty !== null) {
+    difficultySlider.value = String(v.difficulty);
+    difficultySlider.disabled = !v.canPickDifficulty;
+    $('#difficulty-name').textContent = BOT_DIFFICULTY_NAMES[v.difficulty];
+  }
 
   $('#lobby-modes').replaceChildren(
     ...TEAM_SIZES.map((size) => {
@@ -269,6 +313,15 @@ function renderLobby(v: LobbyView) {
   box.replaceChildren(...cards);
 }
 
+const difficultySlider = $<HTMLInputElement>('#difficulty');
+difficultySlider.addEventListener('input', () => {
+  const level = Number(difficultySlider.value);
+  if (!isBotDifficulty(level)) return;
+  $('#difficulty-name').textContent = BOT_DIFFICULTY_NAMES[level];
+  saveDifficulty(level);
+  if (lobbyMode?.kind !== 'bots' && lastLobby?.code && lastLobby.difficulty !== level) conn?.send({ t: 'difficulty', level });
+});
+
 function pickTeamSize(size: TeamSize) {
   if (!lobbyMode) return;
   if (lobbyMode.kind === 'bots') {
@@ -295,6 +348,7 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
       t: 'lobby',
       code: null,
       teamSize,
+      difficulty,
       players: [{ name, isYou: true, isHost: false, team: 0 }],
       startsIn: null,
       canStart: false,
@@ -320,7 +374,8 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
   };
   const look = { color: playerLook.color, topper: playerLook.topper };
   if (mode.kind === 'code') c.send({ t: 'join', name, look, mode: 'code', code: mode.code });
-  else c.send({ t: 'join', name, look, mode: mode.kind, teamSize });
+  else if (mode.kind === 'create') c.send({ t: 'join', name, look, mode: 'create', teamSize, difficulty });
+  else c.send({ t: 'join', name, look, mode: 'quick', teamSize });
 }
 
 function onServerMessage(c: Connection, msg: ServerMessage, mode: Mode) {
@@ -388,7 +443,7 @@ window.addEventListener('keydown', (e) => {
 function startBotsMatch() {
   disconnect();
   lobbyMode = null;
-  beginMatch(new LocalMatch(currentName(), playerLook, teamSize), { kind: 'bots' });
+  beginMatch(new LocalMatch(currentName(), playerLook, teamSize, difficulty), { kind: 'bots' });
 }
 
 function startMode(mode: Mode) {
