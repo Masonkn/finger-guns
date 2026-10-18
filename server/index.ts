@@ -152,10 +152,9 @@ function findRoom(client: Client, msg: Extract<ClientMessage, { t: 'join' }>): R
   // A new room starts on its first player's bot difficulty; they can change it in the lobby.
   const level = isBotDifficulty(msg.difficulty) ? msg.difficulty : DEFAULT_BOT_DIFFICULTY;
   if (msg.mode === 'create') return createRoom(newCode(), teamSize, level);
-  // Public matches are kept apart by mode, so a solo player never lands in a squads lobby.
-  const open = [...rooms.values()].find(
-    (r) => !r.isPrivate && r.state === 'lobby' && !r.isFull && r.teamSize === teamSize,
-  );
+  // Everyone pressing Play online joins the same open lobby, whatever mode or bot level they
+  // last used, so friends always find each other. The lobby's first player sets both.
+  const open = [...rooms.values()].find((r) => !r.isPrivate && r.state === 'lobby' && !r.isFull);
   return open ?? createRoom(null, teamSize, level);
 }
 

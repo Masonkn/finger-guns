@@ -102,14 +102,20 @@ const after = a.inbox.filter((m) => m.t === 'snap').slice(-1)[0] as Extract<Serv
 console.log('B left; B still alive in match (now a bot):', after.alive.includes(startB.you));
 a.ws.close();
 
-// Public lobbies: the first player in sets the bot difficulty, later players can't change it.
+// Public lobbies: everyone lands in the same open lobby whatever their saved mode and level;
+// the first player in sets both, later players can't change them.
 const c = client('C');
 const d = client('D');
 await Promise.all([c.opened, d.opened]);
 c.send({ t: 'join', name: 'Carl', mode: 'quick', teamSize: 3, difficulty: 1 });
 const cl = await c.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby');
-d.send({ t: 'join', name: 'Dee', mode: 'quick', teamSize: 3, difficulty: 3 });
-await c.wait((m) => m.t === 'lobby' && m.players.length === 2);
+d.send({ t: 'join', name: 'Dee', mode: 'quick', teamSize: 1, difficulty: 3 });
+const both = await c.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.players.length === 2);
+console.log('different saved modes still meet in one public lobby:', both.players.map((p) => p.name).join(' + '), 'mode', both.teamSize);
+d.send({ t: 'mode', teamSize: 4 });
+c.send({ t: 'mode', teamSize: 2 });
+await d.wait((m) => m.t === 'lobby' && m.teamSize === 2);
+console.log('leader switched mode to duos; follower change ignored:', !d.inbox.some((m) => m.t === 'lobby' && m.teamSize === 4));
 d.send({ t: 'difficulty', level: 3 });
 c.send({ t: 'difficulty', level: 0 });
 const dl = await d.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.difficulty === 0);

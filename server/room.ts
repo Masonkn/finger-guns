@@ -62,7 +62,7 @@ export class Room {
     return this.isPrivate ? this.leader : null;
   }
 
-  /** Longest in the lobby, public or private: picks how well the bots play. */
+  /** Longest in the lobby, public or private: picks the mode and how well the bots play. */
   get leader(): Client | null {
     return this.clients[0] ?? null;
   }
@@ -113,9 +113,9 @@ export class Room {
     if (this.state === 'lobby' && client === this.host) this.startMatch();
   }
 
-  /** Host switches between solo and teams of 2-4. */
+  /** The longest-waiting player switches between solo and teams of 2-4. */
   setTeamSize(client: Client, size: TeamSize) {
-    if (this.state !== 'lobby' || client !== this.host || size === this.teamSize) return;
+    if (this.state !== 'lobby' || client !== this.leader || size === this.teamSize) return;
     this.teamSize = size;
     // Re-seat in join order, so friends fill the same team first; they can still swap after.
     for (const c of this.clients) c.team = -1;
@@ -193,6 +193,7 @@ export class Room {
         startsIn,
         canStart: c === host,
         canSetDifficulty: c === this.leader,
+        canSetMode: c === this.leader,
       });
     }
   }
