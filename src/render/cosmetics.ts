@@ -57,6 +57,46 @@ export function isTopperId(v: unknown): v is TopperId {
   return TOPPERS.some((t) => t.id === v);
 }
 
+export type GloveId = 'none' | 'cartoon' | 'boxing' | 'leather' | 'gold' | 'camo' | 'purple' | 'ice';
+
+/** Gloves cover the palm, fingers and thumb in one colour and add a flared glove cuff. */
+export const GLOVES: { id: GloveId; name: string; color: number }[] = [
+  { id: 'none', name: 'None', color: 0 },
+  { id: 'cartoon', name: 'Cartoon', color: 0xf7f7fb },
+  { id: 'boxing', name: 'Boxing', color: 0xe8343c },
+  { id: 'leather', name: 'Leather', color: 0x3a2c28 },
+  { id: 'gold', name: 'Gold', color: 0xffc83a },
+  { id: 'camo', name: 'Camo', color: 0x5f7d3c },
+  { id: 'purple', name: 'Purple', color: 0x8a4dff },
+  { id: 'ice', name: 'Ice', color: 0x9fe6ff },
+];
+
+export function isGloveId(v: unknown): v is GloveId {
+  return GLOVES.some((g) => g.id === v);
+}
+
+export function gloveColor(id: GloveId): number | null {
+  return id === 'none' ? null : GLOVES.find((g) => g.id === id)!.color;
+}
+
+/** Sleeve colours for the cuff the hand comes out of. */
+export const SLEEVE_COLORS: HandColor[] = [
+  { name: 'Blue', hex: 0x2f8cff },
+  { name: 'Red', hex: 0xff4d5e },
+  { name: 'Orange', hex: 0xff7f2a },
+  { name: 'Yellow', hex: 0xffb321 },
+  { name: 'Lime', hex: 0xc8e34a },
+  { name: 'Green', hex: 0x2fd17a },
+  { name: 'Teal', hex: 0x1fd6d6 },
+  { name: 'Purple', hex: 0x9b5bff },
+  { name: 'Pink', hex: 0xff7ad9 },
+  { name: 'Grey', hex: 0x8c96a8 },
+  { name: 'Black', hex: 0x30303c },
+  { name: 'White', hex: 0xf2f4fb },
+  { name: 'Brown', hex: 0x8a5a38 },
+  { name: 'Navy', hex: 0x2b3f8f },
+];
+
 const OUTLINE = 0.022;
 const THUMB_TIP_Y = 0.27;
 
@@ -231,12 +271,19 @@ export function buildTopper(id: TopperId): THREE.Group {
 // --- Saved look ----------------------------------------------------------------
 
 export interface PlayerLook {
-  color: number;
+  color: number; // skin
   topper: TopperId;
+  glove: GloveId;
+  sleeve: number;
+}
+
+/** The colour the hand's surface shows: the glove if one is worn, otherwise the skin. */
+export function handSurfaceColor(look: PlayerLook): number {
+  return gloveColor(look.glove) ?? look.color;
 }
 
 const LOOK_KEY = 'finger-guns:look';
-export const DEFAULT_LOOK: PlayerLook = { color: HAND_COLORS[0].hex, topper: 'none' };
+export const DEFAULT_LOOK: PlayerLook = { color: HAND_COLORS[0].hex, topper: 'none', glove: 'none', sleeve: SLEEVE_COLORS[0].hex };
 
 export function loadLook(): PlayerLook {
   try {
@@ -246,6 +293,8 @@ export function loadLook(): PlayerLook {
     return {
       color: typeof v.color === 'number' ? v.color : DEFAULT_LOOK.color,
       topper: isTopperId(v.topper) ? v.topper : DEFAULT_LOOK.topper,
+      glove: isGloveId(v.glove) ? v.glove : DEFAULT_LOOK.glove,
+      sleeve: typeof v.sleeve === 'number' ? v.sleeve : DEFAULT_LOOK.sleeve,
     };
   } catch {
     return { ...DEFAULT_LOOK };
@@ -264,5 +313,7 @@ export function randomLook(): PlayerLook {
   const color = HAND_COLORS[Math.floor(Math.random() * HAND_COLORS.length)].hex;
   // Mostly wear something, so matches look varied.
   const topper = Math.random() < 0.15 ? 'none' : TOPPERS[1 + Math.floor(Math.random() * (TOPPERS.length - 1))].id;
-  return { color, topper };
+  const glove = Math.random() < 0.7 ? 'none' : GLOVES[1 + Math.floor(Math.random() * (GLOVES.length - 1))].id;
+  const sleeve = SLEEVE_COLORS[Math.floor(Math.random() * SLEEVE_COLORS.length)].hex;
+  return { color, topper, glove, sleeve };
 }
