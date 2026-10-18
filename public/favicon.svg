@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Finger gun pointing right out of a blue sleeve. Shapes are drawn twice:
+       a thick dark pass for one shared outline, then the fills on top. -->
+  <g fill="#1a1422" stroke="#1a1422" stroke-width="6" stroke-linejoin="round">
+    <rect x="4" y="28" width="15" height="26" rx="4"/>
+    <rect x="17" y="27" width="24" height="26" rx="8"/>
+    <rect x="31" y="27" width="29" height="11" rx="5.5"/>
+    <rect x="21" y="9" width="10" height="24" rx="5"/>
+  </g>
+  <rect x="4" y="28" width="15" height="26" rx="4" fill="#2f8cff"/>
+  <rect x="15" y="28" width="4" height="26" fill="#a9cdff"/>
+  <rect x="17" y="27" width="24" height="26" rx="8" fill="#ffd2b0"/>
+  <rect x="31" y="27" width="29" height="11" rx="5.5" fill="#ffd2b0"/>
+  <rect x="21" y="9" width="10" height="24" rx="5" fill="#ffd2b0"/>
+  <path d="M27 43h12M27 48h12" stroke="#d99a6c" stroke-width="2" stroke-linecap="round"/>
+</svg>
