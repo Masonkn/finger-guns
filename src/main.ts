@@ -23,6 +23,7 @@ import {
 } from './sim/config';
 import { type LobbyPlayer, type ServerMessage, cleanName } from './net/protocol';
 import { GameScene, createRenderer } from './render/scene';
+import type { World } from './sim/world';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -506,6 +507,10 @@ function autoAimDirection(match: Match, range: number): { x: number; y: number }
   return best;
 }
 
+function nameOf(world: World, id: number): string {
+  return world.brawlers.find((b) => b.id === id)?.name ?? 'Your teammate';
+}
+
 let last = performance.now();
 
 function frame(now: number) {
@@ -530,7 +535,12 @@ function frame(now: number) {
   for (const e of world.events) {
     if (e.type === 'hit') hud.damagePopup(e.x, e.y, e.damage, e.targetId === player.id, e.blocked);
     if (e.type === 'abilityUnlock' && e.brawlerId === player.id) hud.abilityUnlocked(e.ability);
-    if (e.type === 'fingerPickup' && e.brawlerId === player.id) hud.announce(`${e.fingers}-finger gun!`, 1.6);
+    if (e.type === 'fingerPickup' && e.brawlerId === player.id) {
+      hud.announce(e.sharedBy ? `${nameOf(world, e.sharedBy)} shared a finger! ${e.fingers}-finger gun!` : `${e.fingers}-finger gun!`, 1.8);
+    }
+    if (e.type === 'pickup' && e.brawlerId === player.id && e.sharedBy) {
+      hud.announce(`${nameOf(world, e.sharedBy)} shared a power cube!`, 1.6);
+    }
   }
   scene.render(dt, { x: intent.aimX, y: intent.aimY, active: intent.aimActive, isSuper: intent.superAiming });
   world.events.length = 0;
