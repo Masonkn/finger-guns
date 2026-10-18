@@ -1,4 +1,4 @@
-import { MAP_SIZE, PLAYER_COUNT } from './config';
+import { MAP_SIZE, TeamSize, teamCount } from './config';
 import { mulberry32 } from './rng';
 
 export const enum Tile {
@@ -11,7 +11,7 @@ export interface GameMap {
   size: number;
   tiles: Uint8Array; // size * size, index = y * size + x
   crateTiles: { x: number; y: number }[];
-  spawns: { x: number; y: number }[];
+  spawns: { x: number; y: number }[]; // grouped by team: team t's hands use spawns[t * teamSize ...]
 }
 
 export function tileAt(map: GameMap, x: number, y: number): Tile {
@@ -25,7 +25,7 @@ export function tileAt(map: GameMap, x: number, y: number): Tile {
  * Builds a 4-way mirrored arena, the way Showdown maps are symmetric so no
  * spawn is favoured. One quadrant is generated and reflected across both axes.
  */
-export function generateMap(seed: number): GameMap {
+export function generateMap(seed: number, teamSize: TeamSize = 1): GameMap {
   const size = MAP_SIZE;
   const half = size / 2;
   const rand = mulberry32(seed);
@@ -93,16 +93,23 @@ export function generateMap(seed: number): GameMap {
     for (const [mx, my] of mirrors(c.x, c.y, size)) crateSet.add(my * size + mx);
   }
 
-  // Spawns on a ring around the centre; clear the ground around each.
+  // Spawns on a ring around the centre, one point per team with teammates huddled
+  // around it; clear the ground around each.
   const spawns: { x: number; y: number }[] = [];
   const ringRadius = half - 4;
   const angleOffset = rand() * Math.PI * 2;
-  for (let i = 0; i < PLAYER_COUNT; i++) {
-    const a = angleOffset + (i / PLAYER_COUNT) * Math.PI * 2;
-    const sx = half + Math.cos(a) * ringRadius;
-    const sy = half + Math.sin(a) * ringRadius;
-    spawns.push({ x: sx, y: sy });
-    clearArea(tiles, crateSet, size, sx, sy, 1.6);
+  const teams = teamCount(teamSize);
+  for (let t = 0; t < teams; t++) {
+    const a = angleOffset + (t / teams) * Math.PI * 2;
+    const cx = half + Math.cos(a) * ringRadius;
+    const cy = half + Math.sin(a) * ringRadius;
+    for (const [ox, oy] of TEAM_HUDDLE[teamSize]) {
+      // Offsets are along the ring (ox) and toward the centre (oy).
+      const sx = cx - Math.sin(a) * ox - Math.cos(a) * oy;
+      const sy = cy + Math.cos(a) * ox - Math.sin(a) * oy;
+      spawns.push({ x: sx, y: sy });
+      clearArea(tiles, crateSet, size, sx, sy, 1.6);
+    }
   }
   clearArea(tiles, crateSet, size, half, half, 2);
 
@@ -129,6 +136,13 @@ export function generateMap(seed: number): GameMap {
   const crateTiles = [...crateSet].map((i) => ({ x: i % size, y: Math.floor(i / size) }));
   return { size, tiles, crateTiles, spawns };
 }
+
+const TEAM_HUDDLE: Record<TeamSize, [number, number][]> = {
+  1: [[0, 0]],
+  2: [[-0.8, 0], [0.8, 0]],
+  3: [[-1.1, 0], [1.1, 0], [0, 1.1]],
+  4: [[-0.8, -0.4], [0.8, -0.4], [-0.8, 0.9], [0.8, 0.9]],
+};
 
 function mirrors(x: number, y: number, size: number): [number, number][] {
   const fx = size - 1 - x;

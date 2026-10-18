@@ -1,7 +1,20 @@
 // Gameplay tuning. Distances are in tiles, times in seconds.
 
 export const MAP_SIZE = 50;
-export const PLAYER_COUNT = 10;
+export const PLAYER_COUNT = 12;
+
+/** Hands per team: 1 is every hand for itself; 2, 3 and 4 split the 12 into 6, 4 or 3 teams. */
+export type TeamSize = 1 | 2 | 3 | 4;
+export const TEAM_SIZES: TeamSize[] = [1, 2, 3, 4];
+export const TEAM_MODE_NAMES: Record<TeamSize, string> = { 1: 'Solo', 2: 'Duos', 3: 'Trios', 4: 'Squads' };
+
+export function isTeamSize(n: unknown): n is TeamSize {
+  return n === 1 || n === 2 || n === 3 || n === 4;
+}
+
+export function teamCount(size: TeamSize): number {
+  return PLAYER_COUNT / size;
+}
 
 export const BRAWLER = {
   radius: 0.42,

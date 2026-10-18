@@ -1,6 +1,6 @@
 # Finger Guns
 
-A browser battle royale in the style of Brawl Stars Showdown, where every player is a hand firing finger guns. v1 is single player against 9 bots.
+A browser battle royale in the style of Brawl Stars Showdown, where every player is a hand firing finger guns. Matches have 12 hands, solo or in teams of 2, 3 or 4, online or against bots.
 
 ## Run it
 
@@ -10,7 +10,9 @@ npm run server   # game server on :2567 (restarts on changes)
 npm run dev      # game page on http://localhost:5173, talking to that server
 ```
 
-Open two browser windows to play each other: one creates a **Private match**, the other joins with its code. **Play online** matchmakes into a public match that starts after 12 seconds, and bots fill any empty spots. **Play vs bots** runs entirely in the browser.
+Every match starts in a lobby where you pick **Solo**, **Duos**, **Trios** or **Squads** (teams of 4) and see who's in; bots fill every empty spot up to 12. Open two browser windows to play each other: one creates a **Private match**, the other joins with its code. In a private lobby the host (★, whoever has been there longest) picks the mode and starts the match, and anyone can click a team to move to it. **Play online** matchmakes into a public match of the chosen mode that starts after 12 seconds. **Play vs bots** runs entirely in the browser, with bot teammates in team modes.
+
+Teammates can't hurt each other, share what they see in bushes, spawn together and show blue rings and health bars; enemies are red. A team places when its last hand is knocked out, and while your teammates are still in, the camera follows them. The ✕ button (or Esc) quits a match; online, a bot takes over your hand.
 
 - `?debug` on the page URL exposes the running match as `window.fg`.
 - `LAG_MS=100 npm run server` adds fake latency, so you can feel how the game plays on a slow connection.
@@ -46,10 +48,11 @@ A single small instance handles many matches. Each match uses about 30 KB/s of b
 - `src/hud.ts` and `src/input.ts` handle the DOM overlay and the mouse, keyboard and touch controls.
 - Gameplay tuning lives in `src/sim/config.ts`.
 
-With the server running, `npx tsx scripts/netcheck.ts` runs a two-client smoke test: a private match, input, bush hiding, and a player leaving.
+With the server running, `npx tsx scripts/netcheck.ts` runs a two-client smoke test: a private duos lobby (host-only mode and start, switching teams), input, shared team vision, bush hiding, and a player leaving.
 
 To play a batch of bot-only matches headlessly as a balance check:
 
 ```sh
-npx rolldown scripts/simulate.ts --format esm --platform node -o /tmp/sim.mjs && node /tmp/sim.mjs 10
+npx tsx scripts/simulate.ts 10      # 10 solo matches
+npx tsx scripts/simulate.ts 10 4    # 10 squads matches
 ```

@@ -107,7 +107,8 @@ export class BotBrain {
 
     // 2. Pick a fight with the nearest visible enemy.
     // Hunt harder once only a few hands are left so the end game doesn't stall.
-    const reach = w.time < LOOT_PHASE ? 4.5 : w.aliveCount <= 3 ? 14 : m.engageDistance;
+    const endGame = w.aliveCount - this.teammates(bot).length <= 3;
+    const reach = w.time < LOOT_PHASE ? 4.5 : endGame ? 14 : m.engageDistance;
     const target = this.pickTarget(bot, reach);
     m.targetId = target?.id ?? null;
     if (target) {
@@ -142,7 +143,7 @@ export class BotBrain {
     }
 
     // 4. Chase the last place an enemy was seen.
-    if (m.lastSeen && w.time - m.lastSeen.at < (w.aliveCount <= 3 ? 10 : 4)) {
+    if (m.lastSeen && w.time - m.lastSeen.at < (endGame ? 10 : 4)) {
       this.setGoal(bot, m, m.lastSeen.x, m.lastSeen.y);
       return;
     }
@@ -162,6 +163,12 @@ export class BotBrain {
       if (crateGoal && crateD > 3.5) {
         this.setGoal(bot, m, crateGoal.x, crateGoal.y);
       } else if (!crateGoal) {
+        // Stick with the team: wander to a teammate when there's nothing to loot.
+        const mate = this.teammates(bot)[0];
+        if (mate && Math.hypot(mate.x - bot.x, mate.y - bot.y) > 4) {
+          this.setGoal(bot, m, mate.x, mate.y);
+          return;
+        }
         const h = Math.max(2, w.zoneHalfSize - 2);
         this.setGoal(bot, m, center + (Math.random() * 2 - 1) * h, center + (Math.random() * 2 - 1) * h);
       }
@@ -172,7 +179,7 @@ export class BotBrain {
     let best: Brawler | null = null;
     let bestScore = Infinity;
     for (const o of this.world.brawlers) {
-      if (!o.alive || o.id === bot.id) continue;
+      if (!o.alive || o.team === bot.team) continue;
       const d = Math.hypot(o.x - bot.x, o.y - bot.y);
       if (d > maxDistance || !this.world.canSee(bot, o)) continue;
       if (!this.world.hasLineOfSight(bot.x, bot.y, o.x, o.y) && d > 4) continue;
@@ -184,6 +191,10 @@ export class BotBrain {
       }
     }
     return best;
+  }
+
+  private teammates(bot: Brawler): Brawler[] {
+    return this.world.brawlers.filter((o) => o.alive && o.team === bot.team && o.id !== bot.id);
   }
 
   private fight(bot: Brawler, target: Brawler, m: BotMemory, cmd: Command) {

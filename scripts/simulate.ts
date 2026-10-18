@@ -1,12 +1,16 @@
 // Headless check that a full match of bots plays out: someone wins, nobody gets stuck.
 import { BotBrain } from '../src/sim/bot';
-import { Command, World, fingerCount } from '../src/sim/world';
+import { PLAYER_COUNT, isTeamSize } from '../src/sim/config';
+import { Command, World, fingerCount, winnerLabel } from '../src/sim/world';
 
+// npx tsx scripts/simulate.ts [matches] [team size 1-4]
 const STEP = 1 / 60;
 const matches = Number(process.argv[2] ?? 5);
+const teamSize = Number(process.argv[3] ?? 1);
+if (!isTeamSize(teamSize)) throw new Error('Team size must be 1 to 4');
 for (let m = 0; m < matches; m++) {
-  const names = Array.from({ length: 10 }, (_, i) => `Bot${i}`);
-  const world = new World(1000 + m * 7919, names.map((name) => ({ name, isBot: true })));
+  const slots = Array.from({ length: PLAYER_COUNT }, (_, i) => ({ name: `Bot${i}`, isBot: true, team: Math.floor(i / teamSize) }));
+  const world = new World(1000 + m * 7919, slots, teamSize);
   const brain = new BotBrain(world);
   let shots = 0;
   let crates = 0;
@@ -29,8 +33,12 @@ for (let m = 0; m < matches; m++) {
   const winner = world.brawlers.find((b) => b.id === world.winnerId);
   const zoneDeaths = world.brawlers.filter((b) => !b.alive).length;
   const maxStreak = Math.max(...world.brawlers.map((b) => b.kills));
+  const ranks = new Set(world.brawlers.map((b) => b.rank));
   console.log(
-    `match ${m}: ${world.time.toFixed(1)}s, winner ${winner?.name ?? 'none'} (${winner?.kills ?? 0} KOs, ${winner?.cubes ?? 0} cubes, ${winner ? fingerCount(winner) : 0} fingers, streak ${winner?.streak ?? 0}), shots ${shots}, crates broken ${crates}/${world.crates.length}, eliminated ${zoneDeaths}, finger pickups ${fingerPickups}, best streak ${maxStreak}, abilities dash ${abilities.dash} / shield ${abilities.shield} (${blocked} blocked) / rapid ${abilities.rapidFire}`,
+    `match ${m}: ${world.time.toFixed(1)}s, winner ${winnerLabel(world) ?? 'none'} (placings ${[...ranks].sort((a, b) => a - b).join(',')})`,
+  );
+  console.log(
+    `  top hand ${winner?.name ?? 'none'} (${winner?.kills ?? 0} KOs, ${winner?.cubes ?? 0} cubes, ${winner ? fingerCount(winner) : 0} fingers, streak ${winner?.streak ?? 0}), shots ${shots}, crates broken ${crates}/${world.crates.length}, eliminated ${zoneDeaths}, finger pickups ${fingerPickups}, best streak ${maxStreak}, abilities dash ${abilities.dash} / shield ${abilities.shield} (${blocked} blocked) / rapid ${abilities.rapidFire}`,
   );
   if (winner === undefined) process.exitCode = 1;
 }

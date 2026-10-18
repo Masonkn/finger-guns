@@ -2,6 +2,7 @@
   --ink: #1a1422;
   --me: #37d3ff;
   --enemy: #ff3b4a;
+  --ally: #4f7dff;
   --hp-me: #4cf06a;
   --ammo: #ff9a1f;
   --super: #ffd23a;
@@ -52,6 +53,8 @@ html, body {
 }
 .plate-me .plate-name { color: var(--me); }
 .plate-enemy .plate-name { color: #ffd6d9; }
+.plate-ally .plate-name { color: #b9cbff; }
+.plate-ally .plate-fill { background: var(--ally); }
 .plate-top { display: flex; gap: 6px; min-height: 13px; align-items: flex-end; }
 .plate-cubes {
   font-size: 12px;
@@ -388,3 +391,56 @@ html, body {
 .lobby-players li { background: rgba(20, 16, 40, 0.5); border: 3px solid var(--ink); border-radius: 10px; padding: 3px 12px; font-size: 16px; }
 .lobby-players li.you { color: var(--me); }
 .lobby-players li.empty { color: #6d6f9c; border-style: dashed; }
+
+/* Lobby: mode picker and team cards */
+.lobby-modes { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-bottom: 12px; }
+.mode-chip {
+  font: inherit;
+  font-size: 18px;
+  color: #fff;
+  background: rgba(20, 16, 40, 0.5);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  padding: 5px 14px;
+  cursor: pointer;
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+.mode-chip.mode-on { background: linear-gradient(#ffd23a, #ff9a1f); box-shadow: 0 3px 0 var(--ink); }
+.mode-chip:disabled { opacity: 0.4; cursor: default; }
+.mode-chip:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.lobby-teams { margin-bottom: 18px; }
+.lobby-teams .lobby-players { margin: 0; }
+.lobby-teams:has(.lobby-team) { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.lobby-team { background: rgba(20, 16, 40, 0.5); border: 3px solid var(--ink); border-radius: 12px; padding: 6px 8px 8px; }
+.lobby-team-mine { border-color: var(--me); }
+.lobby-team-open { cursor: pointer; }
+.lobby-team-open:hover, .lobby-team-open:focus-visible { background: rgba(79, 125, 255, 0.35); outline: none; }
+.lobby-team-name { font-size: 15px; color: #c9cdfc; margin-bottom: 4px; }
+.lobby-team-open .lobby-team-name::after { content: ' · join'; color: var(--super); }
+.lobby-team ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.lobby-team li { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lobby-team li.you { color: var(--me); }
+.lobby-team li.empty { color: #6d6f9c; }
+
+/* Quit button, top left during a match */
+#quit {
+  display: none;
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  width: 40px;
+  height: 40px;
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(20, 16, 40, 0.65);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  cursor: pointer;
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+#quit:hover { background: rgba(255, 59, 74, 0.6); }
+#lobby .card { width: min(560px, 100%); }

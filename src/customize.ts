@@ -22,7 +22,7 @@ export class CustomizePanel {
     private look: PlayerLook,
     private onChange: (look: PlayerLook) => void,
   ) {
-    this.hand = new HandModel(0x2f8cff, true, look.color, look.topper);
+    this.hand = new HandModel(0x2f8cff, 'me', look.color, look.topper);
     this.hand.setRingVisible(false);
     this.scene.add(this.hand.root);
     this.scene.add(new THREE.HemisphereLight(0xdff1ff, 0x6b5a7a, 1.5));
