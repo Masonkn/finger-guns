@@ -12,6 +12,7 @@
     <canvas id="game"></canvas>
     <div id="hud">
       <button id="super" aria-label="Super"><span>SUPER</span></button>
+      <button id="ability" aria-label="Ability (Q)"><span class="ability-icon"></span><span class="ability-label"></span></button>
     </div>
 
     <div id="menu" class="screen">
@@ -19,11 +20,13 @@
         <h1 class="logo"><span>FINGER</span><span>GUNS</span></h1>
         <p class="tagline">Showdown: last hand standing wins</p>
         <button class="btn" data-play>PLAY</button>
+        <button class="btn btn-small" id="customize-open" data-customize>CUSTOMIZE</button>
         <div class="controls">
           <div><b>Move</b> WASD or left stick</div>
           <div><b>Shoot</b> click, or drag and release the right stick (tap to auto-aim)</div>
           <div><b>Super</b> hold Space, E or right-click and release, or use the yellow button</div>
-          <div><b>Tips</b> break crates for power cubes, hide in bushes, stay out of the gas</div>
+          <div><b>Ability</b> knock out 2 hands in a row to unlock Dash, 4 for Shield, 6 for Rapid Fire; press Q or the ability button</div>
+          <div><b>Tips</b> grab dropped fingers for extra bullets, break crates for power cubes, hide in tall grass, stay out of the gas</div>
         </div>
       </div>
     </div>
@@ -33,6 +36,19 @@
         <div class="end-rank">#1</div>
         <div class="end-sub"></div>
         <button class="btn" data-play>PLAY AGAIN</button>
+        <button class="btn btn-small" data-customize>CUSTOMIZE</button>
+      </div>
+    </div>
+
+    <div id="customize" class="screen" hidden>
+      <div class="card cz-card">
+        <h2 class="cz-title">CUSTOMIZE</h2>
+        <canvas class="cz-preview"></canvas>
+        <div class="cz-heading">Hand colour</div>
+        <div class="cz-colors"></div>
+        <div class="cz-heading">Thumb topper</div>
+        <div class="cz-toppers"></div>
+        <button class="btn" id="customize-close">DONE</button>
       </div>
     </div>
 

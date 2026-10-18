@@ -5,6 +5,8 @@ import { Command, World } from './sim/world';
 import { GameScene, createRenderer } from './render/scene';
 import { Hud } from './hud';
 import { Input } from './input';
+import { CustomizePanel } from './customize';
+import { loadLook } from './render/cosmetics';
 
 const BOT_NAMES = ['Knuckles', 'Pinky', 'Thumbs', 'Lefty', 'Digit', 'Palmer', 'Pointer', 'Mitts', 'Ringo'];
 const STEP = 1 / 60;
@@ -12,9 +14,15 @@ const STEP = 1 / 60;
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const hudRoot = document.querySelector<HTMLElement>('#hud')!;
 const superButton = document.querySelector<HTMLElement>('#super')!;
+const abilityButton = document.querySelector<HTMLElement>('#ability')!;
 const menu = document.querySelector<HTMLElement>('#menu')!;
 const endScreen = document.querySelector<HTMLElement>('#end')!;
 const renderer = createRenderer(canvas);
+let playerLook = loadLook();
+const customizeRoot = document.querySelector<HTMLElement>('#customize')!;
+const customize = new CustomizePanel(customizeRoot, playerLook, (look) => {
+  playerLook = look;
+});
 
 interface Match {
   world: World;
@@ -37,10 +45,10 @@ function startMatch() {
   const names = ['You', ...shuffle(BOT_NAMES)];
   const world = new World(seed, names);
   const playerId = world.brawlers[0].id;
-  const scene = new GameScene(renderer, world, playerId);
-  if (!input) input = new Input(scene, hudRoot, superButton);
+  const scene = new GameScene(renderer, world, playerId, playerLook);
+  if (!input) input = new Input(scene, hudRoot, superButton, abilityButton);
   else input.setScene(scene);
-  const hud = new Hud(hudRoot, world, scene, playerId, superButton);
+  const hud = new Hud(hudRoot, world, scene, playerId, superButton, abilityButton);
   match = { world, bots: new BotBrain(world), scene, hud, input, endShownAt: null };
   menu.hidden = true;
   endScreen.hidden = true;
@@ -109,13 +117,16 @@ function frame(now: number) {
       aimY: intent.aimY,
       fire: intent.fire && firstStep,
       superFire: intent.superFire && firstStep,
+      ability: intent.ability && firstStep ? 'auto' : null,
     });
     firstStep = false;
     world.step(STEP, commands);
   }
 
   for (const e of world.events) {
-    if (e.type === 'hit') hud.damagePopup(e.x, e.y, e.damage, e.targetId === player.id);
+    if (e.type === 'hit') hud.damagePopup(e.x, e.y, e.damage, e.targetId === player.id, e.blocked);
+    if (e.type === 'abilityUnlock' && e.brawlerId === player.id) hud.abilityUnlocked(e.ability);
+    if (e.type === 'fingerPickup' && e.brawlerId === player.id) hud.announce(`${e.fingers}-finger gun!`, 1.6);
   }
   scene.render(dt, { x: intent.aimX, y: intent.aimY, active: intent.aimActive, isSuper: intent.superAiming });
   world.events.length = 0;
@@ -123,7 +134,7 @@ function frame(now: number) {
 
   const over = !player.alive || world.winnerId !== null;
   if (over && match.endShownAt === null) match.endShownAt = now;
-  if (over && match.endShownAt !== null && now - match.endShownAt > 1400 && endScreen.hidden) showEnd(player.rank, player.kills, player.cubes);
+  if (over && match.endShownAt !== null && now - match.endShownAt > 1400 && endScreen.hidden && customizeRoot.hidden) showEnd(player.rank, player.kills, player.cubes);
 }
 
 function showEnd(rank: number, kills: number, cubes: number) {
@@ -149,6 +160,12 @@ document.querySelectorAll<HTMLElement>('[data-play]').forEach((b) =>
   b.addEventListener('click', (e) => {
     e.stopPropagation();
     startMatch();
+  }),
+);
+document.querySelectorAll<HTMLElement>('[data-customize]').forEach((b) =>
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    customize.open(b.closest<HTMLElement>('.screen')!);
   }),
 );
 requestAnimationFrame(frame);

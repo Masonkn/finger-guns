@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { TopperId, buildTopper } from './cosmetics';
 import { toon, withOutline } from './toon';
 
 // A chunky right hand making a finger gun. Local +x is where it points.
@@ -12,66 +13,60 @@ const cuffGeo = new THREE.CylinderGeometry(0.19, 0.2, 0.2, 20);
 const bandGeo = new THREE.CylinderGeometry(0.205, 0.205, 0.05, 20);
 const ringGeo = new THREE.RingGeometry(0.58, 0.72, 40);
 const nailGeo = new THREE.CircleGeometry(0.045, 12);
+const fingerBandGeo = new THREE.CylinderGeometry(0.085, 0.085, 0.05, 14);
+const shieldGeo = new THREE.SphereGeometry(0.95, 28, 18);
 
 const BASE_Y = 0.78;
 const SCALE = 1.6;
+const FAN_ANGLE = 0.17; // radians between pointing fingers; wider than the bullet spread so it reads
 
-const SKIN_TONES = [0xffd2b0, 0xf1b48c, 0xd99a6c, 0xb87850, 0x8d5a3b, 0xffe0c4];
+/** Colours of a finger taken from another hand: its skin and a band in its sleeve colour. */
+export interface FingerLook {
+  skin: number;
+  sleeve: number;
+}
 
 export class HandModel {
   readonly root = new THREE.Group();
   private body = new THREE.Group();
   private thumbPivot = new THREE.Group();
+  private fingers = new THREE.Group();
   private ring: THREE.Mesh;
+  private shield: THREE.Mesh;
   private materials: THREE.Material[] = [];
+  private fingerMaterials: THREE.Material[] = [];
+  private fingerKey = '';
+  private topper: THREE.Group | null = null;
   private recoil = 0;
   private superFlash = 0;
+  private rapid = 0;
+  private shieldOn = 0;
   private bobPhase = Math.random() * 10;
   private deathT = -1;
   private skinMat: THREE.MeshToonMaterial;
+  private nailMat: THREE.MeshBasicMaterial;
 
-  constructor(sleeveColor: number, isPlayer: boolean, skinIndex: number) {
-    const skin = toon(SKIN_TONES[skinIndex % SKIN_TONES.length]);
+  constructor(sleeveColor: number, isPlayer: boolean, skinColor: number, topper: TopperId = 'none') {
+    const skin = toon(skinColor);
     this.skinMat = skin;
     const sleeve = toon(sleeveColor);
     const band = toon(new THREE.Color(sleeveColor).lerp(new THREE.Color(0xffffff), 0.55));
-    const nail = new THREE.MeshBasicMaterial({ color: 0xfff1ea });
-    this.materials.push(skin, sleeve, band, nail);
+    this.nailMat = new THREE.MeshBasicMaterial({ color: 0xfff1ea });
+    this.materials.push(skin, sleeve, band, this.nailMat);
 
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, outline = 0.042) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.castShadow = true;
-      if (outline > 0) withOutline(m, outline);
-      return m;
-    };
-
-    const palm = add(palmGeo, skin);
+    const palm = addMesh(palmGeo, skin);
     this.body.add(palm);
-
-    const index = add(fingerGeo, skin);
-    index.rotation.z = -Math.PI / 2;
-    index.position.set(0.36, 0.1, 0);
-    this.body.add(index);
-
-    const tipNail = new THREE.Mesh(nailGeo, nail);
-    tipNail.position.set(0.5, 0.155, 0);
-    tipNail.rotation.x = -Math.PI / 2;
-    this.body.add(tipNail);
-
-    for (let i = 0; i < 3; i++) {
-      const f = add(curledGeo, skin, 0.038);
-      f.rotation.x = Math.PI / 2;
-      f.position.set(0.21, -0.01 - i * 0.085, 0);
-      this.body.add(f);
-    }
+    this.body.add(this.fingers);
+    this.setExtraFingers([]);
 
     this.thumbPivot.position.set(0.0, 0.15, 0.06);
-    const thumb = add(thumbGeo, skin);
+    const thumb = addMesh(thumbGeo, skin);
     thumb.position.set(0, 0.12, 0);
     this.thumbPivot.add(thumb);
     this.body.add(this.thumbPivot);
+    this.setTopper(topper);
 
-    const cuff = add(cuffGeo, sleeve, 0.04);
+    const cuff = addMesh(cuffGeo, sleeve, 0.04);
     cuff.rotation.z = Math.PI / 2;
     cuff.position.set(-0.3, -0.01, 0);
     this.body.add(cuff);
@@ -96,6 +91,100 @@ export class HandModel {
     this.ring.rotation.x = -Math.PI / 2;
     this.ring.position.y = 0.03;
     this.root.add(this.ring);
+
+    const shieldMat = new THREE.MeshBasicMaterial({
+      color: 0x7fe8ff,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+    });
+    this.materials.push(shieldMat);
+    this.shield = new THREE.Mesh(shieldGeo, shieldMat);
+    this.shield.position.y = 0.85;
+    this.shield.visible = false;
+    const shieldRim = new THREE.Mesh(shieldGeo, new THREE.MeshBasicMaterial({ color: 0xd9fbff, side: THREE.BackSide, transparent: true, opacity: 0.55, depthWrite: false }));
+    shieldRim.scale.setScalar(1.04);
+    this.shield.add(shieldRim);
+    this.root.add(this.shield);
+  }
+
+  setSkinColor(color: number) {
+    this.skinMat.color.set(color);
+  }
+
+  setRingVisible(visible: boolean) {
+    this.ring.visible = visible;
+  }
+
+  /** Swaps the cosmetic worn on the thumb. It rides on the thumb pivot, so it follows the hammer animation. */
+  setTopper(id: TopperId) {
+    if (this.topper) {
+      this.topper.removeFromParent();
+      disposeTree(this.topper);
+      // Topper geometries are built per topper, so they can go too.
+      this.topper.traverse((o) => {
+        if (o instanceof THREE.Mesh && o.name !== 'outline') o.geometry.dispose();
+      });
+    }
+    this.topper = buildTopper(id);
+    this.thumbPivot.add(this.topper);
+  }
+
+  /**
+   * Rebuilds the pointing fingers: the index finger plus one per collected finger,
+   * fanned so the silhouette grows. Curled fingers are used up first.
+   */
+  setExtraFingers(extras: FingerLook[]) {
+    const key = extras.map((f) => `${f.skin}/${f.sleeve}`).join(',');
+    if (key === this.fingerKey && this.fingers.children.length) return;
+    this.fingerKey = key;
+    for (const child of [...this.fingers.children]) {
+      child.removeFromParent();
+      child.traverse((o) => {
+        if (o instanceof THREE.Mesh && o.material instanceof THREE.ShaderMaterial) o.material.dispose();
+      });
+    }
+    for (const m of this.fingerMaterials) m.dispose();
+    this.fingerMaterials = [];
+
+    const n = 1 + extras.length;
+    for (let k = 0; k < n; k++) {
+      const pivot = new THREE.Group();
+      pivot.position.set(0.14, 0.1 - k * 0.06, (k - (n - 1) / 2) * 0.03);
+      pivot.rotation.y = ((n - 1) / 2 - k) * FAN_ANGLE;
+      let mat: THREE.Material = this.skinMat;
+      const extra = k > 0 ? extras[k - 1] : null;
+      if (extra) {
+        mat = toon(extra.skin);
+        this.fingerMaterials.push(mat);
+      }
+      const finger = addMesh(fingerGeo, mat);
+      finger.rotation.z = -Math.PI / 2;
+      finger.position.set(0.22, 0, 0);
+      pivot.add(finger);
+      const nail = new THREE.Mesh(nailGeo, this.nailMat);
+      nail.position.set(0.36, 0.055, 0);
+      nail.rotation.x = -Math.PI / 2;
+      pivot.add(nail);
+      if (extra) {
+        // A band in the original owner's sleeve colour shows whose finger it was.
+        const bandMat = toon(extra.sleeve);
+        this.fingerMaterials.push(bandMat);
+        const band = addMesh(fingerBandGeo, bandMat, 0.025);
+        band.rotation.z = Math.PI / 2;
+        band.position.set(0.1, 0, 0);
+        pivot.add(band);
+      }
+      this.fingers.add(pivot);
+    }
+
+    const curled = Math.max(0, 3 - extras.length);
+    for (let i = 0; i < curled; i++) {
+      const f = addMesh(curledGeo, this.skinMat, 0.038);
+      f.rotation.x = Math.PI / 2;
+      f.position.set(0.21, -0.18 + i * 0.085, 0);
+      this.fingers.add(f);
+    }
   }
 
   shoot(isSuper: boolean) {
@@ -111,6 +200,12 @@ export class HandModel {
     return this.deathT >= 0;
   }
 
+  /** Ability visuals: a bubble while shielded, a hot glow while rapid firing. */
+  setEffects(shielded: boolean, rapidFiring: boolean) {
+    this.shieldOn = shielded ? 1 : 0;
+    this.rapid = rapidFiring ? 1 : 0;
+  }
+
   /** Called every frame with the brawler's sim state. */
   update(dt: number, x: number, y: number, facing: number, moving: boolean, hidden: boolean) {
     this.root.position.set(x, 0, y);
@@ -122,6 +217,7 @@ export class HandModel {
       this.body.rotation.x = t * (Math.PI / 2);
       this.body.position.y = BASE_Y - t * 0.5;
       this.ring.visible = false;
+      this.shield.visible = false;
       if (this.deathT > 2.5) this.root.visible = false;
       return;
     }
@@ -148,16 +244,58 @@ export class HandModel {
     this.thumbPivot.rotation.z = 0.35 - kick * 1.3;
 
     this.superFlash = Math.max(0, this.superFlash - dt * 2.5);
-    this.skinMat.emissive.setRGB(this.superFlash * 0.9, this.superFlash * 0.6, 0);
+    const heat = this.rapid * (0.35 + 0.2 * Math.sin(this.bobPhase * 3));
+    const glowAmount = Math.max(this.superFlash, heat);
+    this.skinMat.emissive.setRGB(glowAmount * 0.9, glowAmount * (this.rapid ? 0.35 : 0.6), 0);
+
+    this.shield.visible = this.shieldOn > 0;
+    if (this.shield.visible) {
+      const pulse = 1 + Math.sin(this.bobPhase * 4) * 0.03;
+      this.shield.scale.setScalar(pulse);
+    }
   }
 
   dispose() {
     this.root.removeFromParent();
     for (const m of this.materials) m.dispose();
-    this.root.traverse((o) => {
-      if (o instanceof THREE.Mesh && o.material instanceof THREE.ShaderMaterial) o.material.dispose();
-    });
+    for (const m of this.fingerMaterials) m.dispose();
+    disposeTree(this.root);
   }
+}
+
+/** A loose finger for drop pickups: skin coloured, with a cuff in the owner's sleeve colour. */
+export function buildFingerTrophy(look: FingerLook): THREE.Group {
+  const g = new THREE.Group();
+  const tilt = new THREE.Group();
+  tilt.rotation.z = -0.5;
+  tilt.scale.setScalar(1.5);
+  const finger = addMesh(fingerGeo, toon(look.skin), 0.045);
+  finger.position.y = 0.06;
+  tilt.add(finger);
+  const nail = new THREE.Mesh(nailGeo, new THREE.MeshBasicMaterial({ color: 0xfff1ea }));
+  nail.position.set(0.055, 0.2, 0);
+  nail.rotation.y = Math.PI / 2;
+  tilt.add(nail);
+  const cuff = addMesh(new THREE.CylinderGeometry(0.11, 0.11, 0.12, 16), toon(look.sleeve), 0.035);
+  cuff.position.y = -0.14;
+  tilt.add(cuff);
+  g.add(tilt);
+  return g;
+}
+
+function addMesh(geo: THREE.BufferGeometry, mat: THREE.Material, outline = 0.042) {
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = true;
+  if (outline > 0) withOutline(m, outline);
+  return m;
+}
+
+function disposeTree(root: THREE.Object3D) {
+  root.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) m.dispose();
+  });
 }
 
 function easeOut(t: number) {
