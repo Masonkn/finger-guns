@@ -101,5 +101,20 @@ await new Promise((r) => setTimeout(r, 1500));
 const after = a.inbox.filter((m) => m.t === 'snap').slice(-1)[0] as Extract<ServerMessage, { t: 'snap' }>;
 console.log('B left; B still alive in match (now a bot):', after.alive.includes(startB.you));
 a.ws.close();
+
+// Public lobbies: the first player in sets the bot difficulty, later players can't change it.
+const c = client('C');
+const d = client('D');
+await Promise.all([c.opened, d.opened]);
+c.send({ t: 'join', name: 'Carl', mode: 'quick', teamSize: 3, difficulty: 1 });
+const cl = await c.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby');
+d.send({ t: 'join', name: 'Dee', mode: 'quick', teamSize: 3, difficulty: 3 });
+await c.wait((m) => m.t === 'lobby' && m.players.length === 2);
+d.send({ t: 'difficulty', level: 3 });
+c.send({ t: 'difficulty', level: 0 });
+const dl = await d.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.difficulty === 0);
+console.log('public lobby started on first player\'s level:', cl.difficulty === 1, '; leader changed it to', dl.difficulty, '; follower ignored:', !d.inbox.some((m) => m.t === 'lobby' && m.difficulty === 3), '; follower can set:', dl.canSetDifficulty);
+c.ws.close();
+d.ws.close();
 await new Promise((r) => setTimeout(r, 300));
 process.exit(0);

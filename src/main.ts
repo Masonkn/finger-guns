@@ -187,7 +187,7 @@ interface LobbyView {
   startLabel: string;
   canPickMode: boolean;
   canPickTeam: boolean;
-  difficulty: BotDifficulty | null; // null hides the slider (public matches always use Normal bots)
+  difficulty: BotDifficulty | null; // null hides the picker
   canPickDifficulty: boolean;
 }
 
@@ -235,8 +235,8 @@ function renderServerLobby(msg: LobbyMessage, status?: string) {
     // Public lobbies are split by mode, so picking one moves you to that queue.
     canPickMode: msg.code === null || msg.canStart,
     canPickTeam: msg.teamSize > 1 && !status,
-    difficulty: msg.code ? msg.difficulty : null,
-    canPickDifficulty: msg.canStart,
+    difficulty: msg.difficulty,
+    canPickDifficulty: msg.canSetDifficulty && !status,
   });
 }
 
@@ -250,9 +250,21 @@ function renderLobby(v: LobbyView) {
   $('#lobby-status').textContent = v.status;
   $('#lobby-difficulty').hidden = v.difficulty === null;
   if (v.difficulty !== null) {
-    difficultySlider.value = String(v.difficulty);
-    difficultySlider.disabled = !v.canPickDifficulty;
-    $('#difficulty-name').textContent = BOT_DIFFICULTY_NAMES[v.difficulty];
+    // Big tap-friendly steps rather than a range input, which iPads won't drag inside the lobby.
+    $('#difficulty-steps').replaceChildren(
+      ...BOT_DIFFICULTY_NAMES.map((label, level) => {
+        const b = document.createElement('button');
+        b.className = `difficulty-step${level === v.difficulty ? ' mode-on' : ''}`;
+        b.textContent = label;
+        b.disabled = !v.canPickDifficulty && level !== v.difficulty;
+        b.setAttribute('aria-pressed', String(level === v.difficulty));
+        b.addEventListener('click', () => isBotDifficulty(level) && pickDifficulty(level));
+        return b;
+      }),
+    );
+    const leader = v.players[0];
+    $('#difficulty-note').textContent =
+      v.canPickDifficulty || !leader || leader.isYou ? '' : `${leader.name} picks how well the bots play`;
   }
 
   $('#lobby-modes').replaceChildren(
@@ -313,14 +325,11 @@ function renderLobby(v: LobbyView) {
   box.replaceChildren(...cards);
 }
 
-const difficultySlider = $<HTMLInputElement>('#difficulty');
-difficultySlider.addEventListener('input', () => {
-  const level = Number(difficultySlider.value);
-  if (!isBotDifficulty(level)) return;
-  $('#difficulty-name').textContent = BOT_DIFFICULTY_NAMES[level];
+function pickDifficulty(level: BotDifficulty) {
   saveDifficulty(level);
-  if (lobbyMode?.kind !== 'bots' && lastLobby?.code && lastLobby.difficulty !== level) conn?.send({ t: 'difficulty', level });
-});
+  if (lobbyMode?.kind === 'bots') renderBotsLobby();
+  else if (lastLobby && lastLobby.difficulty !== level) conn?.send({ t: 'difficulty', level });
+}
 
 function pickTeamSize(size: TeamSize) {
   if (!lobbyMode) return;
@@ -352,6 +361,7 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
       players: [{ name, isYou: true, isHost: false, team: 0 }],
       startsIn: null,
       canStart: false,
+      canSetDifficulty: false,
     },
     'Connecting…',
   );
@@ -375,7 +385,7 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
   const look = { color: playerLook.color, topper: playerLook.topper, glove: playerLook.glove, sleeve: playerLook.sleeve };
   if (mode.kind === 'code') c.send({ t: 'join', name, look, mode: 'code', code: mode.code });
   else if (mode.kind === 'create') c.send({ t: 'join', name, look, mode: 'create', teamSize, difficulty });
-  else c.send({ t: 'join', name, look, mode: 'quick', teamSize });
+  else c.send({ t: 'join', name, look, mode: 'quick', teamSize, difficulty });
 }
 
 function onServerMessage(c: Connection, msg: ServerMessage, mode: Mode) {

@@ -446,9 +446,39 @@ html, body {
 #quit:hover { background: rgba(255, 59, 74, 0.6); }
 #lobby .card { width: min(560px, 100%); }
 
-/* Lobby: bot difficulty slider */
-.lobby-difficulty { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px; font-size: 17px; color: #c9cdfc; }
-.lobby-difficulty[hidden] { display: none; }
-.lobby-difficulty input { width: 160px; accent-color: var(--super); cursor: pointer; }
-.lobby-difficulty input:disabled { cursor: default; opacity: 0.6; }
-.lobby-difficulty strong { font-weight: 400; min-width: 82px; text-align: left; color: var(--super); -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; }
+/* Lobby: bot difficulty steps */
+.lobby-difficulty { display: grid; justify-items: center; gap: 6px; margin-bottom: 12px; }
+.lobby-difficulty-label { font-size: 17px; color: #c9cdfc; }
+.difficulty-steps { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.difficulty-step {
+  font: inherit;
+  font-size: 16px;
+  min-height: 40px;
+  color: #fff;
+  background: rgba(20, 16, 40, 0.5);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+.difficulty-step.mode-on { background: linear-gradient(#ffd23a, #ff9a1f); box-shadow: 0 3px 0 var(--ink); }
+.difficulty-step:disabled { opacity: 0.4; cursor: default; }
+.difficulty-step:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.difficulty-note { font-family: system-ui, sans-serif; font-size: 13px; color: #9ea3dc; min-height: 0; }
+.difficulty-note:empty { display: none; }
+
+/* Touch screens: every menu control at least a fingertip (44px) tall, and no tap delay or zoom. */
+button, .lobby-team, .cz-swatch, .cz-topper { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+@media (pointer: coarse) {
+  .mode-chip, .difficulty-step { min-height: 48px; padding: 6px 16px; font-size: 19px; }
+  .btn-small { min-height: 46px; padding: 8px 18px; }
+  .join-form input { min-height: 46px; }
+  .field input { min-height: 50px; font-size: 22px; }
+  .cz-colors { gap: 10px; }
+  .cz-topper { min-height: 48px; }
+  .lobby-team { padding: 10px; }
+  .lobby-team li { font-size: 17px; line-height: 1.35; }
+  #quit { width: 48px; height: 48px; font-size: 22px; }
+}
