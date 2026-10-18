@@ -18,7 +18,10 @@ const shieldGeo = new THREE.SphereGeometry(0.95, 28, 18);
 
 const BASE_Y = 0.78;
 const SCALE = 1.6;
-const FAN_ANGLE = 0.17; // radians between pointing fingers; wider than the bullet spread so it reads
+// Knuckle heights on the palm, index finger first. Collected fingers open from these
+// slots in order, so the hand unfolds like a real one instead of stacking fingers.
+const KNUCKLE_Y = [0.1, -0.01, -0.095, -0.18];
+const SPLAY_DOWN = 0.28; // radians each lower finger fans down from the one above, like an opening hand
 
 /** Colours of a finger taken from another hand: its skin and a band in its sleeve colour. */
 export interface FingerLook {
@@ -131,8 +134,8 @@ export class HandModel {
   }
 
   /**
-   * Rebuilds the pointing fingers: the index finger plus one per collected finger,
-   * fanned so the silhouette grows. Curled fingers are used up first.
+   * Rebuilds the fingers: the index finger plus one per collected finger, each opening
+   * out of the fist from the next knuckle down. The rest stay curled.
    */
   setExtraFingers(extras: FingerLook[]) {
     const key = extras.map((f) => `${f.skin}/${f.sleeve}`).join(',');
@@ -147,11 +150,11 @@ export class HandModel {
     for (const m of this.fingerMaterials) m.dispose();
     this.fingerMaterials = [];
 
-    const n = 1 + extras.length;
+    const n = Math.min(KNUCKLE_Y.length, 1 + extras.length);
     for (let k = 0; k < n; k++) {
       const pivot = new THREE.Group();
-      pivot.position.set(0.14, 0.1 - k * 0.06, (k - (n - 1) / 2) * 0.03);
-      pivot.rotation.y = ((n - 1) / 2 - k) * FAN_ANGLE;
+      pivot.position.set(0.14, KNUCKLE_Y[k], 0);
+      pivot.rotation.z = -k * SPLAY_DOWN;
       let mat: THREE.Material = this.skinMat;
       const extra = k > 0 ? extras[k - 1] : null;
       if (extra) {
@@ -178,11 +181,11 @@ export class HandModel {
       this.fingers.add(pivot);
     }
 
-    const curled = Math.max(0, 3 - extras.length);
-    for (let i = 0; i < curled; i++) {
+    // The fingers that haven't opened yet stay curled in their own knuckle slots.
+    for (let k = n; k < KNUCKLE_Y.length; k++) {
       const f = addMesh(curledGeo, this.skinMat, 0.038);
       f.rotation.x = Math.PI / 2;
-      f.position.set(0.21, -0.18 + i * 0.085, 0);
+      f.position.set(0.21, KNUCKLE_Y[k], 0);
       this.fingers.add(f);
     }
   }

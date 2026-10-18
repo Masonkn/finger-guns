@@ -52,10 +52,10 @@ export const ZONE = {
 
 /** Finger drops: every knockout drops the victim's finger, and picking one up adds a finger to your gun. */
 export const FINGERS = {
-  max: 5, // fingers on one hand, including the starting index finger
+  max: 4, // index, middle, ring and pinky; the thumb is the hammer
   spread: 0.07, // radians between neighbouring bullets of one multi-finger shot
   // Total damage of a shot that fully connects grows by this fraction per extra finger
-  // (5 fingers = 1.8x), split evenly across the bullets so a grazing hit does less.
+  // (4 fingers = 1.6x), split evenly across the bullets so a grazing hit does less.
   damagePerExtraFinger: 0.2,
   pickupRadius: 0.75,
   dropRadius: 1.0, // how far from the death spot the dropped fingers land

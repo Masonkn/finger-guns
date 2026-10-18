@@ -19,7 +19,7 @@ npm run build    # typecheck + production build into dist/
 
 ## Kill rewards and customization
 
-- Every knockout drops the victim's finger (plus any extra fingers they had collected). Picking one up adds a finger to your gun, up to 5: each finger fires one more bullet in a narrow fan.
+- Every knockout drops the victim's finger (plus any extra fingers they had collected). Picking one up adds a finger to your gun, up to 4 (the whole hand opens): each finger fires one more bullet in a narrow fan.
 - Kills build a streak (reset on death) that adds damage and max HP and unlocks abilities: Dash at 2, Shield at 4, Rapid Fire at 6. The ability button uses the best one that is ready.
 - **Customize** on the menu picks your hand colour and a thumb topper; the choice is saved in the browser.
 
