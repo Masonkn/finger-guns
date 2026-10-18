@@ -20,12 +20,12 @@ export interface WireLook {
 }
 
 export type ClientMessage =
-  | { t: 'join'; name: string; look?: WireLook; mode: 'quick'; teamSize?: TeamSize } // matchmaking into a public match
+  | { t: 'join'; name: string; look?: WireLook; mode: 'quick'; teamSize?: TeamSize; difficulty?: BotDifficulty } // matchmaking into a public match
   | { t: 'join'; name: string; look?: WireLook; mode: 'create'; teamSize?: TeamSize; difficulty?: BotDifficulty } // new private match with a code
   | { t: 'join'; name: string; look?: WireLook; mode: 'code'; code: string } // join a friend's private match
   | { t: 'start' } // host starts a private match
   | { t: 'mode'; teamSize: TeamSize } // host picks solo or a team size for a private match
-  | { t: 'difficulty'; level: BotDifficulty } // host picks how well the bots play in a private match
+  | { t: 'difficulty'; level: BotDifficulty } // the longest-waiting player picks how well the bots play
   | { t: 'team'; team: number } // move to another team in the lobby
   // q: use the current kill-streak ability
   | { t: 'input'; seq: number; mx: number; my: number; ax: number; ay: number; f: 0 | 1; s: 0 | 1; q?: 0 | 1 }
@@ -98,6 +98,7 @@ export type ServerMessage =
       players: LobbyPlayer[];
       startsIn: number | null; // public matches start on a timer
       canStart: boolean; // you are the host of a private match
+      canSetDifficulty: boolean; // you have been in the lobby longest
     }
   | {
       t: 'start';

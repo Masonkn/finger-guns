@@ -149,15 +149,14 @@ function findRoom(client: Client, msg: Extract<ClientMessage, { t: 'join' }>): R
     return null;
   }
   const teamSize: TeamSize = isTeamSize(msg.teamSize) ? msg.teamSize : 1;
-  if (msg.mode === 'create') {
-    const level = isBotDifficulty(msg.difficulty) ? msg.difficulty : DEFAULT_BOT_DIFFICULTY;
-    return createRoom(newCode(), teamSize, level);
-  }
+  // A new room starts on its first player's bot difficulty; they can change it in the lobby.
+  const level = isBotDifficulty(msg.difficulty) ? msg.difficulty : DEFAULT_BOT_DIFFICULTY;
+  if (msg.mode === 'create') return createRoom(newCode(), teamSize, level);
   // Public matches are kept apart by mode, so a solo player never lands in a squads lobby.
   const open = [...rooms.values()].find(
     (r) => !r.isPrivate && r.state === 'lobby' && !r.isFull && r.teamSize === teamSize,
   );
-  return open ?? createRoom(null, teamSize);
+  return open ?? createRoom(null, teamSize, level);
 }
 
 function createRoom(code: string | null, teamSize: TeamSize, difficulty = DEFAULT_BOT_DIFFICULTY): Room {

@@ -54,12 +54,17 @@ export class Room {
     readonly id: string,
     readonly code: string | null, // null for public matchmaking rooms
     public teamSize: TeamSize = 1,
-    public difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY, // public matches stay on Normal
+    public difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY,
   ) {}
 
   /** Whoever has been in the lobby longest picks the mode and starts a private match. */
   get host(): Client | null {
-    return this.isPrivate ? (this.clients[0] ?? null) : null;
+    return this.isPrivate ? this.leader : null;
+  }
+
+  /** Longest in the lobby, public or private: picks how well the bots play. */
+  get leader(): Client | null {
+    return this.clients[0] ?? null;
   }
 
   get isPrivate() {
@@ -119,7 +124,7 @@ export class Room {
   }
 
   setDifficulty(client: Client, level: BotDifficulty) {
-    if (this.state !== 'lobby' || client !== this.host || level === this.difficulty) return;
+    if (this.state !== 'lobby' || client !== this.leader || level === this.difficulty) return;
     this.difficulty = level;
     this.broadcastLobby();
   }
@@ -187,6 +192,7 @@ export class Room {
         players,
         startsIn,
         canStart: c === host,
+        canSetDifficulty: c === this.leader,
       });
     }
   }
