@@ -1,10 +1,10 @@
 import type { Match, MatchResult } from '../game/match';
 import type { PlayerIntent } from '../input';
-import { type PlayerLook, isTopperId, randomLook } from '../render/cosmetics';
+import { DEFAULT_LOOK, type PlayerLook, type TopperId, isGloveId, isTopperId, randomLook } from '../render/cosmetics';
 import { BRAWLER, BULLET, RAPID_FIRE_SHOT_COOLDOWN, SUPER } from '../sim/config';
 import { Brawler, Point, World } from '../sim/world';
 import type { Connection } from './connection';
-import { ClientMessage, FX_DASH, FX_RAPID, FX_SHIELD, ServerMessage, Snapshot, TICK } from './protocol';
+import { type WireLook, ClientMessage, FX_DASH, FX_RAPID, FX_SHIELD, ServerMessage, Snapshot, TICK } from './protocol';
 
 // How far behind the newest snapshot other players are drawn, so there are
 // always two snapshots to blend between even when packets arrive unevenly.
@@ -62,7 +62,7 @@ export class OnlineMatch implements Match {
     this.playerId = start.you;
     // Bots (and anyone who sent no look) get a random one; it only has to look varied.
     for (const p of start.players) {
-      const look = p.look && isTopperId(p.look.topper) ? { color: p.look.color, topper: p.look.topper } : randomLook();
+      const look = p.look && isTopperId(p.look.topper) ? fromWire(p.look, p.look.topper) : randomLook();
       this.looks.set(p.id, look);
     }
     const me = this.me;
@@ -303,4 +303,13 @@ export class OnlineMatch implements Match {
 
 function round3(n: number) {
   return Math.round(n * 1000) / 1000;
+}
+
+function fromWire(w: WireLook, topper: TopperId): PlayerLook {
+  return {
+    color: w.color,
+    topper,
+    glove: isGloveId(w.glove) ? w.glove : DEFAULT_LOOK.glove,
+    sleeve: w.sleeve ?? DEFAULT_LOOK.sleeve,
+  };
 }

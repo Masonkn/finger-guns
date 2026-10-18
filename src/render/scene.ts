@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BULLET, MAP_SIZE, SUPER } from '../sim/config';
 import { Tile } from '../sim/map';
 import type { Brawler, World } from '../sim/world';
-import type { PlayerLook } from './cosmetics';
+import { type PlayerLook, handSurfaceColor } from './cosmetics';
 import { FingerLook, HandModel, buildFingerTrophy } from './hand';
 import { Particles } from './particles';
 import {
@@ -24,7 +24,6 @@ export const CAMERA_PITCH_DEG = 40;
 export const CAMERA_YAW_DEG = 45;
 const VIEW_HEIGHT = 14; // tiles visible vertically on a landscape screen
 
-const SLEEVE_COLORS = [0x2f8cff, 0xff4d5e, 0xffb321, 0x9b5bff, 0x2fd17a, 0xff7ad9, 0x1fd6d6, 0xff7f2a, 0xc8e34a, 0x8c96a8];
 
 export class GameScene {
   readonly scene = new THREE.Scene();
@@ -84,13 +83,12 @@ export class GameScene {
     this.poison = this.buildPoisonClouds();
     this.scene.add(this.particles.mesh);
 
-    world.brawlers.forEach((b, i) => {
+    world.brawlers.forEach((b) => {
       const me = world.brawlers.find((o) => o.id === playerId)!;
       const role = b.id === playerId ? 'me' : b.team === me.team ? 'ally' : 'enemy';
       const look = lookOf(b);
-      const sleeve = SLEEVE_COLORS[i % SLEEVE_COLORS.length];
-      const hand = new HandModel(sleeve, role, look.color, look.topper);
-      this.looks.set(b.id, { skin: look.color, sleeve });
+      const hand = new HandModel(look.sleeve, role, look.color, look.topper, look.glove);
+      this.looks.set(b.id, { skin: handSurfaceColor(look), sleeve: look.sleeve });
       this.hands.set(b.id, hand);
       this.scene.add(hand.root);
     });

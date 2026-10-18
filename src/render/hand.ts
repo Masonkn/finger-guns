@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { TopperId, buildTopper } from './cosmetics';
+import { GloveId, TopperId, buildTopper, gloveColor } from './cosmetics';
 import { toon, withOutline } from './toon';
 
 // A chunky right hand making a finger gun. Local +x is where it points.
@@ -11,6 +11,7 @@ const curledGeo = new THREE.CapsuleGeometry(0.068, 0.1, 6, 12);
 const thumbGeo = new THREE.CapsuleGeometry(0.075, 0.16, 6, 12);
 const cuffGeo = new THREE.CylinderGeometry(0.19, 0.2, 0.2, 20);
 const bandGeo = new THREE.CylinderGeometry(0.205, 0.205, 0.05, 20);
+const gloveCuffGeo = new THREE.CylinderGeometry(0.24, 0.2, 0.1, 20); // flares toward the wrist
 const ringGeo = new THREE.RingGeometry(0.58, 0.72, 40);
 const nailGeo = new THREE.CircleGeometry(0.045, 12);
 const shieldGeo = new THREE.SphereGeometry(0.95, 28, 18);
@@ -49,12 +50,21 @@ export class HandModel {
   private deathT = -1;
   private skinMat: THREE.MeshToonMaterial;
   private nailMat: THREE.MeshBasicMaterial;
+  private sleeveMat: THREE.MeshToonMaterial;
+  private bandMat: THREE.MeshToonMaterial;
+  private gloveCuff: THREE.Mesh;
+  private skinColor: number;
+  private glove: GloveId = 'none';
 
-  constructor(sleeveColor: number, role: HandRole, skinColor: number, topper: TopperId = 'none') {
+  constructor(sleeveColor: number, role: HandRole, skinColor: number, topper: TopperId = 'none', glove: GloveId = 'none') {
+    // With a glove on, the "skin" material shows the glove colour instead.
     const skin = toon(skinColor);
     this.skinMat = skin;
+    this.skinColor = skinColor;
     const sleeve = toon(sleeveColor);
-    const band = toon(new THREE.Color(sleeveColor).lerp(new THREE.Color(0xffffff), 0.55));
+    this.sleeveMat = sleeve;
+    const band = toon(0xffffff);
+    this.bandMat = band;
     this.nailMat = new THREE.MeshBasicMaterial({ color: 0xfff1ea });
     this.materials.push(skin, sleeve, band, this.nailMat);
 
@@ -78,6 +88,12 @@ export class HandModel {
     bandMesh.rotation.z = Math.PI / 2;
     bandMesh.position.set(-0.22, -0.01, 0);
     this.body.add(bandMesh);
+    this.gloveCuff = addMesh(gloveCuffGeo, skin, 0.035);
+    this.gloveCuff.rotation.z = Math.PI / 2;
+    this.gloveCuff.position.set(-0.17, -0.01, 0);
+    this.body.add(this.gloveCuff);
+    this.setSleeveColor(sleeveColor);
+    this.setGlove(glove);
 
     this.body.rotation.order = 'YZX';
     this.body.scale.setScalar(SCALE);
@@ -113,7 +129,22 @@ export class HandModel {
   }
 
   setSkinColor(color: number) {
-    this.skinMat.color.set(color);
+    this.skinColor = color;
+    this.skinMat.color.set(gloveColor(this.glove) ?? color);
+  }
+
+  /** Puts on a glove (or takes it off): palm, fingers and thumb take its colour, nails hide. */
+  setGlove(id: GloveId) {
+    this.glove = id;
+    const color = gloveColor(id);
+    this.skinMat.color.set(color ?? this.skinColor);
+    this.nailMat.visible = color === null;
+    this.gloveCuff.visible = color !== null;
+  }
+
+  setSleeveColor(color: number) {
+    this.sleeveMat.color.set(color);
+    this.bandMat.color.set(color).lerp(new THREE.Color(0xffffff), 0.55);
   }
 
   setRingVisible(visible: boolean) {

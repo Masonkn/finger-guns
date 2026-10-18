@@ -318,7 +318,7 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
     if (running?.match instanceof OnlineMatch && running.match.result) return; // match already decided
     showMenu('Lost connection to the game server.');
   };
-  const look = { color: playerLook.color, topper: playerLook.topper };
+  const look = { color: playerLook.color, topper: playerLook.topper, glove: playerLook.glove, sleeve: playerLook.sleeve };
   if (mode.kind === 'code') c.send({ t: 'join', name, look, mode: 'code', code: mode.code });
   else c.send({ t: 'join', name, look, mode: mode.kind, teamSize });
 }

@@ -15,6 +15,8 @@ export const ROOM_CODE_LENGTH = 4;
 export interface WireLook {
   color: number;
   topper: string;
+  glove?: string;
+  sleeve?: number;
 }
 
 export type ClientMessage =
@@ -122,8 +124,12 @@ export function cleanName(raw: unknown): string {
 /** Keeps a client-supplied look to a colour and a short topper id; the client checks the id against its list. */
 export function cleanLook(raw: unknown): WireLook | null {
   if (!raw || typeof raw !== 'object') return null;
-  const { color, topper } = raw as Record<string, unknown>;
-  if (typeof color !== 'number' || !Number.isInteger(color) || color < 0 || color > 0xffffff) return null;
-  if (typeof topper !== 'string' || !/^[a-zA-Z]{1,20}$/.test(topper)) return null;
-  return { color, topper };
+  const { color, topper, glove, sleeve } = raw as Record<string, unknown>;
+  const isColor = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 0xffffff;
+  const isId = (v: unknown): v is string => typeof v === 'string' && /^[a-zA-Z]{1,20}$/.test(v);
+  if (!isColor(color) || !isId(topper)) return null;
+  const look: WireLook = { color, topper };
+  if (isId(glove)) look.glove = glove;
+  if (isColor(sleeve)) look.sleeve = sleeve;
+  return look;
 }

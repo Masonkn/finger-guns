@@ -323,6 +323,7 @@ html, body {
   box-shadow: 0 3px 0 var(--ink);
 }
 .cz-swatch.cz-on { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--ink); transform: scale(1.08); }
+.cz-gloves { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 7px; }
 .cz-toppers { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 7px; margin-bottom: 16px; }
 .cz-topper {
   font: inherit;

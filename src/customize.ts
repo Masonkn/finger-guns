@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HAND_COLORS, PlayerLook, TOPPERS, saveLook } from './render/cosmetics';
+import { GLOVES, HAND_COLORS, HandColor, PlayerLook, SLEEVE_COLORS, TOPPERS, saveLook } from './render/cosmetics';
 import { HandModel } from './render/hand';
 
 /**
@@ -22,38 +22,46 @@ export class CustomizePanel {
     private look: PlayerLook,
     private onChange: (look: PlayerLook) => void,
   ) {
-    this.hand = new HandModel(0x2f8cff, 'me', look.color, look.topper);
+    this.hand = new HandModel(look.sleeve, 'me', look.color, look.topper, look.glove);
     this.hand.setRingVisible(false);
     this.scene.add(this.hand.root);
     this.scene.add(new THREE.HemisphereLight(0xdff1ff, 0x6b5a7a, 1.5));
     const sun = new THREE.DirectionalLight(0xffffff, 2.2);
     sun.position.set(3, 5, 4);
     this.scene.add(sun);
-    this.camera.position.set(1.55, 1.95, 2.05);
-    this.camera.lookAt(0.12, 0.98, 0);
+    this.camera.position.set(1.8, 2.25, 2.4);
+    this.camera.lookAt(0.12, 1.08, 0);
 
-    const colors = root.querySelector<HTMLElement>('.cz-colors')!;
-    for (const c of HAND_COLORS) {
+    this.swatches(root.querySelector<HTMLElement>('.cz-colors')!, HAND_COLORS, (hex) => ({ ...this.look, color: hex }));
+    this.buttons(root.querySelector<HTMLElement>('.cz-gloves')!, GLOVES, (id) => ({ ...this.look, glove: id }));
+    this.swatches(root.querySelector<HTMLElement>('.cz-sleeves')!, SLEEVE_COLORS, (hex) => ({ ...this.look, sleeve: hex }));
+    this.buttons(root.querySelector<HTMLElement>('.cz-toppers')!, TOPPERS, (id) => ({ ...this.look, topper: id }));
+    root.querySelector('#customize-close')!.addEventListener('click', () => this.close());
+    this.refreshSelection();
+  }
+
+  private swatches(container: HTMLElement, colors: HandColor[], pick: (hex: number) => PlayerLook) {
+    for (const c of colors) {
       const b = document.createElement('button');
       b.className = 'cz-swatch';
       b.style.background = `#${c.hex.toString(16).padStart(6, '0')}`;
       b.title = c.name;
       b.setAttribute('aria-label', c.name);
-      b.dataset.color = String(c.hex);
-      b.addEventListener('click', () => this.set({ ...this.look, color: c.hex }));
-      colors.append(b);
+      b.dataset.value = String(c.hex);
+      b.addEventListener('click', () => this.set(pick(c.hex)));
+      container.append(b);
     }
-    const toppers = root.querySelector<HTMLElement>('.cz-toppers')!;
-    for (const t of TOPPERS) {
+  }
+
+  private buttons<T extends string>(container: HTMLElement, items: { id: T; name: string }[], pick: (id: T) => PlayerLook) {
+    for (const item of items) {
       const b = document.createElement('button');
       b.className = 'cz-topper';
-      b.textContent = t.name;
-      b.dataset.topper = t.id;
-      b.addEventListener('click', () => this.set({ ...this.look, topper: t.id }));
-      toppers.append(b);
+      b.textContent = item.name;
+      b.dataset.value = item.id;
+      b.addEventListener('click', () => this.set(pick(item.id)));
+      container.append(b);
     }
-    root.querySelector('#customize-close')!.addEventListener('click', () => this.close());
-    this.refreshSelection();
   }
 
   open(from: HTMLElement) {
@@ -83,6 +91,8 @@ export class CustomizePanel {
   private set(look: PlayerLook) {
     if (look.color !== this.look.color) this.hand.setSkinColor(look.color);
     if (look.topper !== this.look.topper) this.hand.setTopper(look.topper);
+    if (look.glove !== this.look.glove) this.hand.setGlove(look.glove);
+    if (look.sleeve !== this.look.sleeve) this.hand.setSleeveColor(look.sleeve);
     this.look = look;
     saveLook(look);
     this.onChange(look);
@@ -90,12 +100,12 @@ export class CustomizePanel {
   }
 
   private refreshSelection() {
-    this.root.querySelectorAll<HTMLElement>('.cz-swatch').forEach((b) => {
-      b.classList.toggle('cz-on', Number(b.dataset.color) === this.look.color);
-    });
-    this.root.querySelectorAll<HTMLElement>('.cz-topper').forEach((b) => {
-      b.classList.toggle('cz-on', b.dataset.topper === this.look.topper);
-    });
+    const mark = (sel: string, value: string | number) =>
+      this.root.querySelectorAll<HTMLElement>(`${sel} button`).forEach((b) => b.classList.toggle('cz-on', b.dataset.value === String(value)));
+    mark('.cz-colors', this.look.color);
+    mark('.cz-gloves', this.look.glove);
+    mark('.cz-sleeves', this.look.sleeve);
+    mark('.cz-toppers', this.look.topper);
   }
 
   private draw(dt: number) {
