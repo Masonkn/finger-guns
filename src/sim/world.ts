@@ -2,13 +2,20 @@ import {
   ABILITY,
   ABILITY_LOCKOUT,
   ABILITY_ORDER,
+  AMMO,
+  AMMO_PICKUP,
   AbilityKind,
+  AmmoKind,
+  AmmoStats,
   BRAWLER,
+  BURN,
+  CHILL,
   BULLET,
   CRATE,
   DASH_SPEED_MULTIPLIER,
   FINGERS,
   MAP_SIZE,
+  PICKUP_AMMO_KINDS,
   POWER_CUBE,
   RAPID_FIRE_SHOT_COOLDOWN,
   STREAK,
@@ -17,6 +24,7 @@ import {
   ZONE,
 } from './config';
 import { GameMap, Tile, generateMap, tileAt } from './map';
+import { mulberry32 } from './rng';
 
 export interface Command {
   moveX: number;
@@ -74,6 +82,12 @@ export interface Brawler {
   dashY: number;
   shieldUntil: number;
   rapidUntil: number;
+  /** Bullet type, and when it runs out and goes back to normal. */
+  ammoKind: AmmoKind;
+  ammoUntil: number;
+  burnUntil: number;
+  burnById: number | null; // who set it on fire, for the knockout
+  chillUntil: number;
 }
 
 export interface Bullet {
@@ -89,6 +103,8 @@ export interface Bullet {
   range: number;
   damage: number;
   isSuper: boolean;
+  kind: AmmoKind;
+  bouncesLeft: number;
   chargeShare: number; // fraction of a normal hit's super charge this bullet gives
   alive: boolean;
 }
@@ -108,6 +124,15 @@ export interface Cube {
   alive: boolean;
 }
 
+/** A box on the ground that swaps your bullets for a special type for a while. */
+export interface AmmoPickup {
+  id: number;
+  kind: AmmoKind;
+  x: number;
+  y: number;
+  alive: boolean;
+}
+
 /** A finger dropped on knockout. `fromId` is the brawler it originally belonged to. */
 export interface FingerDrop {
   id: number;
@@ -119,7 +144,7 @@ export interface FingerDrop {
 
 export type GameEvent =
   | { type: 'shot'; brawlerId: number; isSuper: boolean }
-  | { type: 'hit'; x: number; y: number; targetId: number; damage: number; blocked?: boolean }
+  | { type: 'hit'; x: number; y: number; targetId: number; damage: number; blocked?: boolean; kind?: AmmoKind }
   | { type: 'crateHit'; crateId: number }
   | { type: 'crateBreak'; crateId: number; x: number; y: number }
   | { type: 'wallHit'; x: number; y: number }
@@ -127,6 +152,7 @@ export type GameEvent =
   | { type: 'pickup'; brawlerId: number; cubeId: number }
   | { type: 'fingerDrop'; fingerId: number; fromId: number; x: number; y: number }
   | { type: 'fingerPickup'; brawlerId: number; fingerId: number; fromId: number; fingers: number }
+  | { type: 'ammoPickup'; brawlerId: number; pickupId: number; kind: AmmoKind }
   | { type: 'ability'; brawlerId: number; ability: AbilityKind }
   | { type: 'abilityUnlock'; brawlerId: number; ability: AbilityKind };
 
@@ -140,6 +166,11 @@ export function winnerLabel(world: World): string | null {
 /** Number of fingers on a brawler's gun, which is also bullets per normal shot. */
 export function fingerCount(b: Brawler): number {
   return 1 + b.extraFingers.length;
+}
+
+/** The bullets a brawler is shooting right now. */
+export function ammoOf(b: Brawler): AmmoStats {
+  return AMMO[b.ammoKind];
 }
 
 export function abilityUnlocked(b: Brawler, kind: AbilityKind): boolean {
@@ -178,6 +209,7 @@ export class World {
   crates: Crate[] = [];
   cubes: Cube[] = [];
   fingers: FingerDrop[] = [];
+  ammoPickups: AmmoPickup[] = [];
   events: GameEvent[] = [];
   zoneHalfSize = MAP_SIZE / 2;
   /** Set when one team is left: a surviving hand of the winning team, and that team. */
@@ -185,6 +217,8 @@ export class World {
   winnerTeam: number | null = null;
   private nextId = 1;
   private crateGrid: Int32Array; // tile index -> crate id, 0 when none
+  private rand: () => number; // for loot only; the arena itself comes from generateMap
+  private nextAmmoSpawn = AMMO_PICKUP.respawnEvery;
 
   constructor(
     seed: number,
@@ -234,8 +268,16 @@ export class World {
         dashY: 0,
         shieldUntil: 0,
         rapidUntil: 0,
+        ammoKind: 'normal',
+        ammoUntil: 0,
+        burnUntil: 0,
+        burnById: null,
+        chillUntil: 0,
       });
     }
+    // After the brawlers, so their ids match what an online client builds from the same seed.
+    this.rand = mulberry32(seed ^ 0x5bd1e995);
+    for (let i = 0; i < AMMO_PICKUP.startCount; i++) this.spawnAmmoPickup();
   }
 
   get aliveCount(): number {
@@ -317,6 +359,19 @@ export class World {
     return this.time < b.rapidUntil;
   }
 
+  isBurning(b: Brawler): boolean {
+    return this.time < b.burnUntil;
+  }
+
+  isChilled(b: Brawler): boolean {
+    return this.time < b.chillUntil;
+  }
+
+  /** Walking speed multiplier (ice slows you). */
+  speedScale(b: Brawler): number {
+    return this.isChilled(b) ? CHILL.speedMultiplier : 1;
+  }
+
   abilityReady(b: Brawler, kind: AbilityKind): boolean {
     return abilityUnlocked(b, kind) && this.time >= b.abilityReadyAt[kind] && this.time >= b.abilityLockUntil;
   }
@@ -335,6 +390,7 @@ export class World {
     this.updateBullets(dt);
     this.updateCubes();
     this.updateFingers();
+    this.updateAmmoPickups(dt);
 
     if (this.aliveTeamCount <= 1) {
       // Nobody standing means the last team went down this very step; it placed first.
@@ -376,7 +432,7 @@ export class World {
       const v = BRAWLER.speed * DASH_SPEED_MULTIPLIER * dt;
       this.moveWithCollision(b, b.dashX * v, b.dashY * v);
     } else if (!cmd.skipMove) {
-      this.moveBody(b, mx, my, dt);
+      this.moveBody(b, mx, my, dt, this.speedScale(b));
     }
 
     if (cmd.superFire && b.superCharge >= 1) this.fireSuper(b);
@@ -408,7 +464,7 @@ export class World {
    * Moves a brawler-sized circle by a (clamped) input direction for one step.
    * Public so the client can predict its own movement with the exact same rules.
    */
-  moveBody(b: Point, moveX: number, moveY: number, dt: number) {
+  moveBody(b: Point, moveX: number, moveY: number, dt: number, speedScale = 1) {
     let mx = moveX;
     let my = moveY;
     const len = Math.hypot(mx, my);
@@ -416,7 +472,8 @@ export class World {
       mx /= len;
       my /= len;
     }
-    this.moveWithCollision(b, mx * BRAWLER.speed * dt, my * BRAWLER.speed * dt);
+    const v = BRAWLER.speed * speedScale * dt;
+    this.moveWithCollision(b, mx * v, my * v);
   }
 
   private moveWithCollision(b: Point, dx: number, dy: number) {
@@ -462,17 +519,20 @@ export class World {
 
   private fire(b: Brawler) {
     const rapid = this.isRapidFiring(b);
-    const cooldown = rapid ? RAPID_FIRE_SHOT_COOLDOWN : BRAWLER.shotCooldown;
+    const ammo = ammoOf(b);
+    const cooldown = rapid ? RAPID_FIRE_SHOT_COOLDOWN : ammo.cooldown;
     if ((!rapid && b.ammo < 1) || this.time - b.lastShotAt < cooldown) return;
     if (!rapid) b.ammo -= 1;
     b.lastShotAt = this.time;
     b.lastCombatAt = this.time;
-    // One bullet per finger, fanned around the aim direction.
+    // Normal ammo shoots one bullet per finger; a shotgun shoots a wider spray. Fanned around the aim.
     const n = fingerCount(b);
-    const perBullet = (BULLET.damage * (1 + FINGERS.damagePerExtraFinger * (n - 1))) / n;
-    for (let i = 0; i < n; i++) {
-      const a = b.facing + (i - (n - 1) / 2) * FINGERS.spread;
-      this.spawnBullet(b, a, BULLET.speed, BULLET.range, perBullet, false, 1 / n);
+    const count = ammo.pellets + ammo.pelletsPerFinger * (n - 1);
+    const width = (count - 1) * FINGERS.spread + ammo.spread;
+    const perBullet = (BULLET.damage * ammo.damage * (1 + FINGERS.damagePerExtraFinger * (n - 1))) / count;
+    for (let i = 0; i < count; i++) {
+      const a = b.facing + (count > 1 ? (i / (count - 1) - 0.5) * width : 0);
+      this.spawnBullet(b, a, ammo.speed, ammo.range, perBullet, false, 1 / count, b.ammoKind, ammo.bounces);
     }
     this.events.push({ type: 'shot', brawlerId: b.id, isSuper: false });
   }
@@ -496,6 +556,8 @@ export class World {
     dmg: number,
     isSuper: boolean,
     chargeShare = 1,
+    kind: AmmoKind = 'normal',
+    bounces = 0,
   ) {
     const dx = Math.cos(angle);
     const dy = Math.sin(angle);
@@ -512,12 +574,23 @@ export class World {
       range,
       damage: dmg * this.damageMultiplier(b),
       isSuper,
+      kind,
+      bouncesLeft: bounces,
       chargeShare,
       alive: true,
     });
   }
 
   private updateBrawler(b: Brawler, dt: number) {
+    if (b.ammoKind !== 'normal' && this.time >= b.ammoUntil) b.ammoKind = 'normal';
+    if (this.isBurning(b)) {
+      b.lastCombatAt = this.time; // no healing while on fire
+      if (!this.isShielded(b)) {
+        const by = this.brawlers.find((o) => o.id === b.burnById) ?? null;
+        this.damage(b, BURN.damagePerSecond * dt, by);
+      }
+      if (!b.alive) return;
+    }
     if (b.ammo < BRAWLER.maxAmmo) {
       b.ammo = Math.min(BRAWLER.maxAmmo, b.ammo + dt / BRAWLER.reloadTime);
     }
@@ -539,24 +612,30 @@ export class World {
       const steps = Math.max(1, Math.ceil(dist / 0.2));
       const stepLen = dist / steps;
       for (let s = 0; s < steps && bullet.alive; s++) {
+        const px = bullet.x;
+        const py = bullet.y;
         bullet.x += bullet.dx * stepLen;
         bullet.y += bullet.dy * stepLen;
         bullet.travelled += stepLen;
-        this.checkBulletHit(bullet);
+        this.checkBulletHit(bullet, px, py);
         if (bullet.travelled >= bullet.range) bullet.alive = false;
       }
     }
     this.bullets = this.bullets.filter((b) => b.alive);
   }
 
-  private checkBulletHit(bullet: Bullet) {
+  private checkBulletHit(bullet: Bullet, px: number, py: number) {
     const tx = Math.floor(bullet.x);
     const ty = Math.floor(bullet.y);
     if (this.isSolid(tx, ty)) {
-      bullet.alive = false;
       const crate = this.crateAt(tx, ty);
+      if (!crate) this.events.push({ type: 'wallHit', x: bullet.x, y: bullet.y });
+      if (!crate && bullet.bouncesLeft > 0) {
+        this.bounce(bullet, px, py);
+        return;
+      }
+      bullet.alive = false;
       if (crate) this.damageCrate(crate, bullet);
-      else this.events.push({ type: 'wallHit', x: bullet.x, y: bullet.y });
       return;
     }
     const owner = this.brawlers.find((b) => b.id === bullet.ownerId);
@@ -571,13 +650,29 @@ export class World {
         return;
       }
       this.damage(b, bullet.damage, owner ?? null);
-      this.events.push({ type: 'hit', x: bullet.x, y: bullet.y, targetId: b.id, damage: bullet.damage });
+      this.events.push({ type: 'hit', x: bullet.x, y: bullet.y, targetId: b.id, damage: bullet.damage, kind: bullet.kind });
+      if (b.alive && bullet.kind === 'fire') {
+        b.burnUntil = this.time + BURN.duration;
+        b.burnById = bullet.ownerId;
+      }
+      if (b.alive && bullet.kind === 'ice') b.chillUntil = this.time + CHILL.duration;
       if (owner && !bullet.isSuper) {
         owner.superCharge = Math.min(1, owner.superCharge + BRAWLER.superChargePerHit * bullet.chargeShare);
       }
       if (owner && bullet.isSuper) owner.superCharge = Math.min(1, owner.superCharge + 0.02);
       return;
     }
+  }
+
+  /** Reflects a bullet off the wall it just entered, back from where it came. */
+  private bounce(bullet: Bullet, px: number, py: number) {
+    const hitX = this.isSolid(Math.floor(bullet.x), Math.floor(py));
+    const hitY = this.isSolid(Math.floor(px), Math.floor(bullet.y));
+    if (hitX || !hitY) bullet.dx = -bullet.dx;
+    if (hitY || !hitX) bullet.dy = -bullet.dy;
+    bullet.x = px;
+    bullet.y = py;
+    bullet.bouncesLeft--;
   }
 
   private damageCrate(crate: Crate, bullet: Bullet) {
@@ -589,6 +684,55 @@ export class World {
     const cy = crate.y + 0.5;
     this.cubes.push({ id: this.nextId++, x: cx, y: cy, alive: true });
     this.events.push({ type: 'crateBreak', crateId: crate.id, x: cx, y: cy });
+    if (this.rand() < AMMO_PICKUP.crateDropChance) {
+      const a = this.rand() * Math.PI * 2;
+      const p = { x: cx + Math.cos(a) * 0.8, y: cy + Math.sin(a) * 0.8 };
+      this.pushOutOfWalls(p);
+      this.ammoPickups.push({ id: this.nextId++, kind: this.randomAmmoKind(), x: p.x, y: p.y, alive: true });
+    }
+  }
+
+  private randomAmmoKind(): AmmoKind {
+    return PICKUP_AMMO_KINDS[Math.floor(this.rand() * PICKUP_AMMO_KINDS.length)];
+  }
+
+  /** Drops an ammo box on a random open tile inside the zone, away from where hands start. */
+  private spawnAmmoPickup() {
+    const size = this.map.size;
+    for (let tries = 0; tries < 60; tries++) {
+      const tx = Math.floor(this.rand() * size);
+      const ty = Math.floor(this.rand() * size);
+      const x = tx + 0.5;
+      const y = ty + 0.5;
+      if (this.map.tiles[ty * size + tx] !== Tile.Empty || this.isSolid(tx, ty)) continue;
+      if (this.isOutsideZone(x, y, 2)) continue;
+      if (this.time === 0 && this.map.spawns.some((s) => Math.hypot(s.x - x, s.y - y) < 4)) continue;
+      if (this.ammoPickups.some((p) => Math.hypot(p.x - x, p.y - y) < 5)) continue;
+      this.ammoPickups.push({ id: this.nextId++, kind: this.randomAmmoKind(), x, y, alive: true });
+      return;
+    }
+  }
+
+  private updateAmmoPickups(dt: number) {
+    this.nextAmmoSpawn -= dt;
+    if (this.nextAmmoSpawn <= 0) {
+      this.nextAmmoSpawn = AMMO_PICKUP.respawnEvery;
+      if (this.ammoPickups.length < AMMO_PICKUP.maxOnMap) this.spawnAmmoPickup();
+    }
+    for (const p of this.ammoPickups) {
+      if (!p.alive) continue;
+      for (const b of this.brawlers) {
+        if (!b.alive) continue;
+        if (Math.hypot(b.x - p.x, b.y - p.y) > AMMO_PICKUP.pickupRadius) continue;
+        p.alive = false;
+        // A new type replaces the old one; the same type tops the timer back up.
+        b.ammoKind = p.kind;
+        b.ammoUntil = this.time + AMMO_PICKUP.duration;
+        this.events.push({ type: 'ammoPickup', brawlerId: b.id, pickupId: p.id, kind: p.kind });
+        break;
+      }
+    }
+    this.ammoPickups = this.ammoPickups.filter((p) => p.alive);
   }
 
   /** Removes a crate from play (also used by clients replaying server events). */
@@ -612,6 +756,8 @@ export class World {
       for (const o of this.brawlers) if (o.team === b.team) o.rank = rank;
     }
     b.streak = 0;
+    b.burnUntil = 0;
+    b.chillUntil = 0;
     if (attacker) this.rewardKill(attacker);
     // Drop collected cubes (at least one) for whoever wins the fight.
     const drops = Math.max(1, b.cubes);

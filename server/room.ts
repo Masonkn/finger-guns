@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize, teamCount } from '../src/sim/config';
+import { AMMO_KINDS, AmmoKind, BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize, teamCount } from '../src/sim/config';
 import { BotBrain } from '../src/sim/bot';
 import { Command, PlayerSlot, World, winnerLabel } from '../src/sim/world';
 import {
@@ -7,6 +7,8 @@ import {
   ClientMessage,
   LobbyPlayer,
   ServerMessage,
+  FX_BURN,
+  FX_CHILL,
   FX_DASH,
   FX_RAPID,
   FX_SHIELD,
@@ -256,7 +258,7 @@ export class Room {
         c.last = input;
         consumed = true;
         // A dash carries the hand on its own, so walking input pauses until it ends.
-        if (me.alive && !world.isDashing(me)) world.moveBody(me, input.mx, input.my, TICK);
+        if (me.alive && !world.isDashing(me)) world.moveBody(me, input.mx, input.my, TICK, world.speedScale(me));
         fire ||= input.f === 1;
         superFire ||= input.s === 1;
         ability ||= input.q === 1;
@@ -320,13 +322,20 @@ export class Room {
         bush: o.inBush ? 1 : 0,
         stk: o.streak,
         fg: o.extraFingers,
-        fx: (world.isShielded(o) ? FX_SHIELD : 0) | (world.isRapidFiring(o) ? FX_RAPID : 0) | (world.isDashing(o) ? FX_DASH : 0),
+        fx:
+          (world.isShielded(o) ? FX_SHIELD : 0) |
+          (world.isRapidFiring(o) ? FX_RAPID : 0) |
+          (world.isDashing(o) ? FX_DASH : 0) |
+          (world.isBurning(o) ? FX_BURN : 0) |
+          (world.isChilled(o) ? FX_CHILL : 0),
       };
+      if (o.ammoKind !== 'normal') s.ak = kindIndex(o.ammoKind);
       if (o === me) {
         s.ammo = round(o.ammo, 3);
         s.sup = round(o.superCharge, 3);
         s.ar = [round(o.abilityReadyAt.dash, 3), round(o.abilityReadyAt.shield, 3), round(o.abilityReadyAt.rapidFire, 3)];
         s.al = round(o.abilityLockUntil, 3);
+        if (o.ammoKind !== 'normal') s.au = round(o.ammoUntil, 3);
       }
       b.push(s);
     }
@@ -345,9 +354,11 @@ export class Room {
         dx: round(u.dx, 3),
         dy: round(u.dy, 3),
         sup: u.isSuper ? 1 : 0,
+        ...(u.kind !== 'normal' && { k: kindIndex(u.kind) }),
       })),
       cubes: world.cubes.map((k) => [k.id, round(k.x), round(k.y)]),
       fingers: world.fingers.map((f) => [f.id, round(f.x), round(f.y), f.fromId]),
+      ammo: world.ammoPickups.map((p) => [p.id, round(p.x), round(p.y), kindIndex(p.kind)]),
       ev: events,
     });
   }
@@ -361,6 +372,10 @@ export function send(ws: WebSocket, msg: ServerMessage) {
   const go = () => ws.readyState === ws.OPEN && ws.send(data);
   if (LAG_MS > 0) setTimeout(go, LAG_MS);
   else go();
+}
+
+function kindIndex(kind: AmmoKind): number {
+  return AMMO_KINDS.indexOf(kind);
 }
 
 function shuffle<T>(arr: T[]): T[] {

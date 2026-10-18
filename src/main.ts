@@ -9,7 +9,6 @@ import { Connection } from './net/connection';
 import { OnlineMatch } from './net/online';
 import {
   BOT_DIFFICULTY_NAMES,
-  BULLET,
   BotDifficulty,
   DEFAULT_BOT_DIFFICULTY,
   PLAYER_COUNT,
@@ -23,6 +22,7 @@ import {
 } from './sim/config';
 import { type LobbyPlayer, type ServerMessage, cleanName } from './net/protocol';
 import { GameScene, createRenderer } from './render/scene';
+import { ammoOf } from './sim/world';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -519,7 +519,7 @@ function frame(now: number) {
 
   const intent = input.read(player.x, player.y);
   if (intent.autoAim) {
-    const d = autoAimDirection(match, intent.superFire ? SUPER.range : BULLET.range);
+    const d = autoAimDirection(match, intent.superFire ? SUPER.range : ammoOf(player).range);
     if (d) {
       intent.aimX = d.x;
       intent.aimY = d.y;
@@ -531,6 +531,7 @@ function frame(now: number) {
     if (e.type === 'hit') hud.damagePopup(e.x, e.y, e.damage, e.targetId === player.id, e.blocked);
     if (e.type === 'abilityUnlock' && e.brawlerId === player.id) hud.abilityUnlocked(e.ability);
     if (e.type === 'fingerPickup' && e.brawlerId === player.id) hud.announce(`${e.fingers}-finger gun!`, 1.6);
+    if (e.type === 'ammoPickup' && e.brawlerId === player.id) hud.ammoPickedUp(e.kind);
   }
   scene.render(dt, { x: intent.aimX, y: intent.aimY, active: intent.aimActive, isSuper: intent.superAiming });
   world.events.length = 0;
