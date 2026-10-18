@@ -499,7 +499,7 @@ export class GameScene {
   }
 
   private cubeGeo = new RoundedBoxGeometry(0.36, 0.36, 0.36, 2, 0.05);
-  private cubeMat = toon(0x55e85a, { emissive: 0x1d7a22 });
+  private cubeMat = makeCubeMaterial();
 
   private syncCubes() {
     const alive = new Set<number>();
@@ -516,6 +516,8 @@ export class GameScene {
       m.position.set(c.x, 0.45 + Math.sin(this.clockTime * 3 + c.id) * 0.1, c.y);
       m.rotation.set(0.6, this.clockTime * 1.8 + c.id, 0.3);
     }
+    // The finger-gun picture on every face pulses gently.
+    this.cubeMat.emissiveIntensity = 0.85 + Math.sin(this.clockTime * 4) * 0.15;
     for (const [id, m] of this.cubeMeshes) {
       if (!alive.has(id)) {
         m.removeFromParent();
@@ -724,4 +726,51 @@ function brickTexture(): THREE.CanvasTexture {
 function hash(a: number, b: number, c: number): number {
   const s = Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453;
   return s - Math.floor(s);
+}
+
+/**
+ * Power cube material: green, with a glowing white finger-gun picture on every face.
+ * The same picture drives the emissive map, so the gun glows while the green stays toon-shaded.
+ */
+function makeCubeMaterial(): THREE.MeshToonMaterial {
+  const draw = (bg: string) => {
+    const size = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d')!;
+    g.fillStyle = bg;
+    g.fillRect(0, 0, size, size);
+    g.fillStyle = '#ffffff';
+    g.shadowColor = '#ffffff';
+    g.shadowBlur = 10;
+    // Side-on finger gun pointing right, filling most of the face. Drawn twice to strengthen the glow.
+    for (let i = 0; i < 2; i++) {
+      roundRect(g, 8, 52, 18, 50, 6); // cuff
+      roundRect(g, 22, 48, 54, 56, 16); // fist
+      roundRect(g, 60, 48, 62, 22, 11); // index finger
+      roundRect(g, 28, 12, 20, 50, 10); // thumb
+    }
+    // Creases between the curled fingers.
+    g.shadowBlur = 0;
+    g.strokeStyle = bg;
+    g.lineWidth = 3;
+    g.lineCap = 'round';
+    for (const y of [76, 90]) {
+      g.beginPath();
+      g.moveTo(46, y);
+      g.lineTo(72, y);
+      g.stroke();
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
+  };
+  return toon(0xffffff, { map: draw('#55e85a'), emissive: 0xffffff, emissiveMap: draw('#1d7a22') });
+}
+
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  g.beginPath();
+  g.roundRect(x, y, w, h, r);
+  g.fill();
 }
