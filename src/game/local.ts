@@ -1,14 +1,14 @@
 import type { PlayerIntent } from '../input';
 import { type PlayerLook, randomLook } from '../render/cosmetics';
-import { PLAYER_COUNT } from '../sim/config';
+import { PLAYER_COUNT, TeamSize } from '../sim/config';
 import { BotBrain } from '../sim/bot';
-import { Brawler, Command, World } from '../sim/world';
+import { Brawler, Command, World, winnerLabel } from '../sim/world';
 import type { Match, MatchResult } from './match';
 
 const STEP = 1 / 60;
-const BOT_NAMES = ['Knuckles', 'Pinky', 'Thumbs', 'Lefty', 'Digit', 'Palmer', 'Pointer', 'Mitts', 'Ringo'];
+const BOT_NAMES = ['Knuckles', 'Pinky', 'Thumbs', 'Lefty', 'Digit', 'Palmer', 'Pointer', 'Mitts', 'Ringo', 'Wristy', 'Nails'];
 
-/** Single-player match against bots, simulated entirely in the browser. */
+/** Single-player match against bots (bot teammates in team modes), simulated entirely in the browser. */
 export class LocalMatch implements Match {
   readonly world: World;
   readonly playerId: number;
@@ -16,12 +16,15 @@ export class LocalMatch implements Match {
   private acc = 0;
   private looks = new Map<number, PlayerLook>();
 
-  constructor(name: string, look: PlayerLook) {
+  constructor(name: string, look: PlayerLook, teamSize: TeamSize = 1) {
     const bots = shuffle(BOT_NAMES).slice(0, PLAYER_COUNT - 1);
-    this.world = new World(Math.floor(Math.random() * 1e9), [
-      { name, isBot: false },
-      ...bots.map((n) => ({ name: n, isBot: true })),
-    ]);
+    // You are seat 0, so your team is team 0 and bots make up the rest of it.
+    const names = [name, ...bots];
+    this.world = new World(
+      Math.floor(Math.random() * 1e9),
+      names.map((n, i) => ({ name: n, isBot: i > 0, team: Math.floor(i / teamSize) })),
+      teamSize,
+    );
     this.playerId = this.world.brawlers[0].id;
     this.bots = new BotBrain(this.world);
     for (const b of this.world.brawlers) this.looks.set(b.id, b.id === this.playerId ? look : randomLook());
@@ -33,7 +36,7 @@ export class LocalMatch implements Match {
 
   isVisible(b: Brawler): boolean {
     const me = this.world.brawlers[0];
-    return b.id === me.id || !me.alive || this.world.canSee(me, b);
+    return !this.world.isTeamAlive(me.team) || this.world.teamCanSee(me.team, b);
   }
 
   update(dt: number, intent: PlayerIntent) {
@@ -64,9 +67,8 @@ export class LocalMatch implements Match {
 
   get result(): MatchResult | null {
     const me = this.world.brawlers[0];
-    if (me.alive && this.world.winnerId === null) return null;
-    const winner = this.world.brawlers.find((b) => b.id === this.world.winnerId);
-    return { rank: me.rank, kills: me.kills, cubes: me.cubes, winner: winner?.name ?? null };
+    if (me.rank === 0) return null; // your team is still in it
+    return { rank: me.rank, kills: me.kills, cubes: me.cubes, winner: winnerLabel(this.world) };
   }
 
   dispose() {}

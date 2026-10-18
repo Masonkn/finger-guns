@@ -27,6 +27,10 @@ export interface FingerLook {
   sleeve: number;
 }
 
+/** Whose hand this is, from the local player's point of view; sets the ring colour under it. */
+export type HandRole = 'me' | 'ally' | 'enemy';
+const RING_COLORS: Record<HandRole, number> = { me: 0x37d3ff, ally: 0x4f7dff, enemy: 0xff3b4a };
+
 export class HandModel {
   readonly root = new THREE.Group();
   private body = new THREE.Group();
@@ -46,7 +50,7 @@ export class HandModel {
   private skinMat: THREE.MeshToonMaterial;
   private nailMat: THREE.MeshBasicMaterial;
 
-  constructor(sleeveColor: number, isPlayer: boolean, skinColor: number, topper: TopperId = 'none') {
+  constructor(sleeveColor: number, role: HandRole, skinColor: number, topper: TopperId = 'none') {
     const skin = toon(skinColor);
     this.skinMat = skin;
     const sleeve = toon(sleeveColor);
@@ -81,7 +85,7 @@ export class HandModel {
     this.root.add(this.body);
 
     const ringMat = new THREE.MeshBasicMaterial({
-      color: isPlayer ? 0x37d3ff : 0xff3b4a,
+      color: RING_COLORS[role],
       transparent: true,
       opacity: 0.85,
       depthWrite: false,

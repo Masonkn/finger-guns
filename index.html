@@ -13,12 +13,13 @@
     <div id="hud">
       <button id="super" aria-label="Super"><span>SUPER</span></button>
       <button id="ability" aria-label="Ability (Q)"><span class="ability-icon"></span><span class="ability-label"></span></button>
+      <button id="quit" aria-label="Quit match (Esc)" title="Quit match (Esc)">✕</button>
     </div>
 
     <div id="menu" class="screen">
       <div class="card">
         <h1 class="logo"><span>FINGER</span><span>GUNS</span></h1>
-        <p class="tagline">Showdown: last hand standing wins</p>
+        <p class="tagline">Showdown: last hand (or team) standing wins</p>
         <label class="field">
           <span>Your name</span>
           <input id="name" maxlength="14" autocomplete="nickname" spellcheck="false" />
@@ -54,11 +55,23 @@
           <strong id="lobby-code-value"></strong>
           <button class="btn btn-small" id="copy-link">Copy invite link</button>
         </div>
+        <div class="lobby-modes" id="lobby-modes" role="group" aria-label="Team size"></div>
         <div class="lobby-status" id="lobby-status"></div>
-        <ul class="lobby-players" id="lobby-players"></ul>
+        <div class="lobby-teams" id="lobby-teams"></div>
         <div class="menu-buttons">
           <button class="btn" id="lobby-start" hidden>START NOW</button>
           <button class="btn btn-alt" id="lobby-cancel">LEAVE</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="quit-confirm" class="screen" hidden>
+      <div class="card">
+        <div class="lobby-title">Leave this match?</div>
+        <p class="end-sub" id="quit-note"></p>
+        <div class="menu-buttons">
+          <button class="btn" id="quit-yes">LEAVE MATCH</button>
+          <button class="btn btn-alt" id="quit-no">KEEP PLAYING</button>
         </div>
       </div>
     </div>

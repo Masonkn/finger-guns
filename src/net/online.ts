@@ -52,7 +52,8 @@ export class OnlineMatch implements Match {
   ) {
     this.world = new World(
       start.seed,
-      start.players.map((p) => ({ name: p.name, isBot: false })),
+      start.players.map((p) => ({ name: p.name, isBot: false, team: p.team })),
+      start.teamSize,
     );
     // Both sides build the same arena from the seed, so ids line up; check anyway.
     start.players.forEach((p, i) => {
@@ -75,7 +76,8 @@ export class OnlineMatch implements Match {
   }
 
   isVisible(b: Brawler): boolean {
-    return b.id === this.playerId || !this.me.alive || this.visibleIds.has(b.id);
+    // The server only sends what your team can see (everything once your team is out).
+    return b.id === this.playerId || this.visibleIds.has(b.id);
   }
 
   lookOf(b: Brawler): PlayerLook {
@@ -175,7 +177,11 @@ export class OnlineMatch implements Match {
     w.zoneHalfSize = snap.zone;
     const alive = new Set(snap.alive);
     for (const b of w.brawlers) b.alive = alive.has(b.id);
-    if (alive.size === 1) w.winnerId = snap.alive[0];
+    const standing = w.brawlers.filter((b) => b.alive);
+    if (standing.length > 0 && standing.every((b) => b.team === standing[0].team)) {
+      w.winnerId = standing[0].id;
+      w.winnerTeam = standing[0].team;
+    }
 
     this.visibleIds = new Set(snap.b.map((b) => b.id));
     for (const s of snap.b) {
@@ -278,6 +284,7 @@ export class OnlineMatch implements Match {
       return {
         id: u.id,
         ownerId: 0,
+        team: -1,
         x: u.x + u.dx * speed * age,
         y: u.y + u.dy * speed * age,
         dx: u.dx,

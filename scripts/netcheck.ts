@@ -1,4 +1,4 @@
-// Smoke test for the game server: two clients make a private match, play a few seconds, one leaves.
+// Smoke test for the game server: two clients make a private duos match, team up, play a few seconds, one leaves.
 // Run with the server up: npx tsx scripts/netcheck.ts [ws://localhost:2567/ws]
 import WebSocket from 'ws';
 import type { ServerMessage } from '../src/net/protocol';
@@ -33,11 +33,31 @@ const lobby = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t ==
 console.log('private code', lobby.code);
 b.send({ t: 'join', name: 'Bob<script>', mode: 'code', code: lobby.code });
 const lobby2 = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.players.length === 2);
-console.log('lobby players', lobby2.players.map((p) => p.name).join(', '));
+console.log('lobby players', lobby2.players.map((p) => `${p.name}${p.isHost ? ' (host)' : ''} team ${p.team}`).join(', '));
+// Only the host can change the mode or start.
+b.send({ t: 'mode', teamSize: 4 });
 b.send({ t: 'start' });
+a.send({ t: 'mode', teamSize: 2 });
+const duos = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.teamSize === 2);
+console.log('host picked duos:', duos.players.map((p) => `${p.name} team ${p.team}`).join(', '));
+if (!duos.players.every((p) => p.team === 0)) throw new Error('duos should seat A and B together');
+b.send({ t: 'team', team: 3 });
+await a.wait((m) => m.t === 'lobby' && m.players.some((p) => !p.isYou && p.team === 3));
+b.send({ t: 'team', team: 0 });
+const together = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>(
+  (m) => m.t === 'lobby' && m.players.length === 2 && m.players.every((p) => p.team === 0) && m !== duos,
+);
+console.log('B moved to team 3 and back to team 0:', together.players.map((p) => p.team).join(','));
+if (a.inbox.some((m) => m.t === 'start')) throw new Error('non-host was able to start');
+a.send({ t: 'start' });
 const startA = await a.wait<Extract<ServerMessage, { t: 'start' }>>((m) => m.t === 'start');
 const startB = await b.wait<Extract<ServerMessage, { t: 'start' }>>((m) => m.t === 'start');
-console.log('started, seed', startA.seed, 'A is', startA.you, 'B is', startB.you, 'players', startA.players.length);
+console.log('started, seed', startA.seed, 'A is', startA.you, 'B is', startB.you, 'players', startA.players.length, 'team size', startA.teamSize);
+const teamOf = (id: number) => startA.players.find((p) => p.id === id)!.team;
+console.log('A and B on the same team:', teamOf(startA.you) === teamOf(startB.you));
+const teamSizes = new Map<number, number>();
+for (const p of startA.players) teamSizes.set(p.team, (teamSizes.get(p.team) ?? 0) + 1);
+console.log('teams:', [...teamSizes.values()].join(','));
 
 let seq = 0;
 const timer = setInterval(() => {
@@ -53,6 +73,7 @@ const meA = lastA.b.find((x) => x.id === startA.you)!;
 const bytes = JSON.stringify(lastA).length;
 console.log(`A got ${snapsA.length} snapshots in 3s, last ack ${lastA.ack}/${seq}, size ${bytes} B`);
 console.log(`A moved from spawn to (${meA.x}, ${meA.y}), ammo ${meA.ammo}; sees ${lastA.b.length}/${lastA.alive.length} alive brawlers`);
+console.log('A always sees teammate B:', snapsA.every((s) => !s.alive.includes(startB.you) || s.b.some((x) => x.id === startB.you)));
 const shots = snapsA.flatMap((s) => s.ev).filter((e) => e.type === 'shot' && e.brawlerId === startA.you).length;
 console.log('A shots registered:', shots);
 // A bush hider should only be sent when close or right after shooting.
@@ -60,10 +81,10 @@ const lastShot = new Map<number, number>();
 let hiddenLeak = false;
 for (const s of snapsA) {
   for (const e of s.ev) if (e.type === 'shot') lastShot.set(e.brawlerId, s.time);
-  const me = s.b.find((x) => x.id === startA.you)!;
+  const team = s.b.filter((x) => teamOf(x.id) === teamOf(startA.you));
   for (const x of s.b) {
-    if (x.id === startA.you || x.bush !== 1) continue;
-    const near = Math.hypot(x.x - me.x, x.y - me.y) < 2.4;
+    if (teamOf(x.id) === teamOf(startA.you) || x.bush !== 1) continue;
+    const near = team.some((m) => Math.hypot(x.x - m.x, x.y - m.y) < 2.4);
     const shotRecently = s.time - (lastShot.get(x.id) ?? -10) < 0.65;
     if (!near && !shotRecently) hiddenLeak = true;
   }
