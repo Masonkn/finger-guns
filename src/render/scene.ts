@@ -187,7 +187,7 @@ export class GameScene {
       const moving = Math.hypot(b.moveX, b.moveY) > 0.1;
       const hidden = b.id !== this.playerId && !w.canSee(player, b) && player.alive;
       if (b.alive) {
-        hand.setExtraFingers(b.extraFingers.map((id) => this.looks.get(id)!));
+        hand.setFingerCount(1 + b.extraFingers.length);
         hand.setEffects(w.isShielded(b), w.isRapidFiring(b));
         if (w.isDashing(b) && !hidden) {
           this.particles.burst(b.x, 0.35, b.y, 1, 0xffffff, { speed: 0.6, size: 0.22, life: 0.35, gravity: 0, up: 0.4 });

@@ -13,17 +13,15 @@ const cuffGeo = new THREE.CylinderGeometry(0.19, 0.2, 0.2, 20);
 const bandGeo = new THREE.CylinderGeometry(0.205, 0.205, 0.05, 20);
 const ringGeo = new THREE.RingGeometry(0.58, 0.72, 40);
 const nailGeo = new THREE.CircleGeometry(0.045, 12);
-const fingerBandGeo = new THREE.CylinderGeometry(0.085, 0.085, 0.05, 14);
 const shieldGeo = new THREE.SphereGeometry(0.95, 28, 18);
 
 const BASE_Y = 0.78;
 const SCALE = 1.6;
 // Knuckle heights on the palm, index finger first. Collected fingers open from these
-// slots in order, so the hand unfolds like a real one instead of stacking fingers.
+// slots in order and point straight ahead, side by side like a real finger gun.
 const KNUCKLE_Y = [0.1, -0.01, -0.095, -0.18];
-const SPLAY_DOWN = 0.28; // radians each lower finger fans down from the one above, like an opening hand
 
-/** Colours of a finger taken from another hand: its skin and a band in its sleeve colour. */
+/** Colours of a dropped finger: its owner's skin, with a cuff in their sleeve colour. */
 export interface FingerLook {
   skin: number;
   sleeve: number;
@@ -37,8 +35,7 @@ export class HandModel {
   private ring: THREE.Mesh;
   private shield: THREE.Mesh;
   private materials: THREE.Material[] = [];
-  private fingerMaterials: THREE.Material[] = [];
-  private fingerKey = '';
+  private fingerCount = 0;
   private topper: THREE.Group | null = null;
   private recoil = 0;
   private superFlash = 0;
@@ -60,7 +57,7 @@ export class HandModel {
     const palm = addMesh(palmGeo, skin);
     this.body.add(palm);
     this.body.add(this.fingers);
-    this.setExtraFingers([]);
+    this.setFingerCount(1);
 
     this.thumbPivot.position.set(0.0, 0.15, 0.06);
     const thumb = addMesh(thumbGeo, skin);
@@ -135,50 +132,28 @@ export class HandModel {
 
   /**
    * Rebuilds the fingers: the index finger plus one per collected finger, each opening
-   * out of the fist from the next knuckle down. The rest stay curled.
+   * straight out of the fist from the next knuckle down. The rest stay curled.
    */
-  setExtraFingers(extras: FingerLook[]) {
-    const key = extras.map((f) => `${f.skin}/${f.sleeve}`).join(',');
-    if (key === this.fingerKey && this.fingers.children.length) return;
-    this.fingerKey = key;
+  setFingerCount(count: number) {
+    const n = Math.max(1, Math.min(KNUCKLE_Y.length, count));
+    if (n === this.fingerCount) return;
+    this.fingerCount = n;
     for (const child of [...this.fingers.children]) {
       child.removeFromParent();
       child.traverse((o) => {
         if (o instanceof THREE.Mesh && o.material instanceof THREE.ShaderMaterial) o.material.dispose();
       });
     }
-    for (const m of this.fingerMaterials) m.dispose();
-    this.fingerMaterials = [];
 
-    const n = Math.min(KNUCKLE_Y.length, 1 + extras.length);
     for (let k = 0; k < n; k++) {
-      const pivot = new THREE.Group();
-      pivot.position.set(0.14, KNUCKLE_Y[k], 0);
-      pivot.rotation.z = -k * SPLAY_DOWN;
-      let mat: THREE.Material = this.skinMat;
-      const extra = k > 0 ? extras[k - 1] : null;
-      if (extra) {
-        mat = toon(extra.skin);
-        this.fingerMaterials.push(mat);
-      }
-      const finger = addMesh(fingerGeo, mat);
+      const finger = addMesh(fingerGeo, this.skinMat);
       finger.rotation.z = -Math.PI / 2;
-      finger.position.set(0.22, 0, 0);
-      pivot.add(finger);
+      finger.position.set(0.36, KNUCKLE_Y[k], 0);
+      this.fingers.add(finger);
       const nail = new THREE.Mesh(nailGeo, this.nailMat);
-      nail.position.set(0.36, 0.055, 0);
+      nail.position.set(0.5, KNUCKLE_Y[k] + 0.055, 0);
       nail.rotation.x = -Math.PI / 2;
-      pivot.add(nail);
-      if (extra) {
-        // A band in the original owner's sleeve colour shows whose finger it was.
-        const bandMat = toon(extra.sleeve);
-        this.fingerMaterials.push(bandMat);
-        const band = addMesh(fingerBandGeo, bandMat, 0.025);
-        band.rotation.z = Math.PI / 2;
-        band.position.set(0.1, 0, 0);
-        pivot.add(band);
-      }
-      this.fingers.add(pivot);
+      this.fingers.add(nail);
     }
 
     // The fingers that haven't opened yet stay curled in their own knuckle slots.
@@ -261,7 +236,6 @@ export class HandModel {
   dispose() {
     this.root.removeFromParent();
     for (const m of this.materials) m.dispose();
-    for (const m of this.fingerMaterials) m.dispose();
     disposeTree(this.root);
   }
 }
