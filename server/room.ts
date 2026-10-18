@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { PLAYER_COUNT, TeamSize, teamCount } from '../src/sim/config';
+import { BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize, teamCount } from '../src/sim/config';
 import { BotBrain } from '../src/sim/bot';
 import { Command, PlayerSlot, World, winnerLabel } from '../src/sim/world';
 import {
@@ -54,6 +54,7 @@ export class Room {
     readonly id: string,
     readonly code: string | null, // null for public matchmaking rooms
     public teamSize: TeamSize = 1,
+    public difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY, // public matches stay on Normal
   ) {}
 
   /** Whoever has been in the lobby longest picks the mode and starts a private match. */
@@ -117,6 +118,12 @@ export class Room {
     this.broadcastLobby();
   }
 
+  setDifficulty(client: Client, level: BotDifficulty) {
+    if (this.state !== 'lobby' || client !== this.host || level === this.difficulty) return;
+    this.difficulty = level;
+    this.broadcastLobby();
+  }
+
   setTeam(client: Client, team: number) {
     if (this.state !== 'lobby' || !this.clients.includes(client)) return;
     if (!Number.isInteger(team) || team < 0 || team >= teamCount(this.teamSize)) return;
@@ -172,7 +179,15 @@ export class Room {
         isHost: o === host,
         team: o.team,
       }));
-      send(c.ws, { t: 'lobby', code: this.code, teamSize: this.teamSize, players, startsIn, canStart: c === host });
+      send(c.ws, {
+        t: 'lobby',
+        code: this.code,
+        teamSize: this.teamSize,
+        difficulty: this.difficulty,
+        players,
+        startsIn,
+        canStart: c === host,
+      });
     }
   }
 
@@ -199,7 +214,7 @@ export class Room {
       seats.map((o) => o.slot),
       size,
     );
-    this.bots = new BotBrain(this.world);
+    this.bots = new BotBrain(this.world, this.difficulty);
     seats.forEach((o, i) => {
       if (o.client) o.client.brawlerId = this.world!.brawlers[i].id;
     });

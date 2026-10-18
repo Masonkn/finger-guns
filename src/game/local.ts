@@ -1,6 +1,6 @@
 import type { PlayerIntent } from '../input';
 import { type PlayerLook, randomLook } from '../render/cosmetics';
-import { PLAYER_COUNT, TeamSize } from '../sim/config';
+import { BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize } from '../sim/config';
 import { BotBrain } from '../sim/bot';
 import { Brawler, Command, World, winnerLabel } from '../sim/world';
 import type { Match, MatchResult } from './match';
@@ -16,7 +16,7 @@ export class LocalMatch implements Match {
   private acc = 0;
   private looks = new Map<number, PlayerLook>();
 
-  constructor(name: string, look: PlayerLook, teamSize: TeamSize = 1) {
+  constructor(name: string, look: PlayerLook, teamSize: TeamSize = 1, difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY) {
     const bots = shuffle(BOT_NAMES).slice(0, PLAYER_COUNT - 1);
     // You are seat 0, so your team is team 0 and bots make up the rest of it.
     const names = [name, ...bots];
@@ -26,7 +26,7 @@ export class LocalMatch implements Match {
       teamSize,
     );
     this.playerId = this.world.brawlers[0].id;
-    this.bots = new BotBrain(this.world);
+    this.bots = new BotBrain(this.world, difficulty);
     for (const b of this.world.brawlers) this.looks.set(b.id, b.id === this.playerId ? look : randomLook());
   }
 

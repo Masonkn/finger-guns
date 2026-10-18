@@ -36,6 +36,10 @@ const lobby2 = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t =
 console.log('lobby players', lobby2.players.map((p) => `${p.name}${p.isHost ? ' (host)' : ''} team ${p.team}`).join(', '));
 // Only the host can change the mode or start.
 b.send({ t: 'mode', teamSize: 4 });
+b.send({ t: 'difficulty', level: 3 });
+a.send({ t: 'difficulty', level: 0 });
+const easy = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.difficulty === 0);
+console.log('host set bots to very easy; guest change ignored:', !a.inbox.some((m) => m.t === 'lobby' && m.difficulty === 3), easy.difficulty);
 b.send({ t: 'start' });
 a.send({ t: 'mode', teamSize: 2 });
 const duos = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.teamSize === 2);

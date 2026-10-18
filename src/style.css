@@ -445,3 +445,10 @@ html, body {
 }
 #quit:hover { background: rgba(255, 59, 74, 0.6); }
 #lobby .card { width: min(560px, 100%); }
+
+/* Lobby: bot difficulty slider */
+.lobby-difficulty { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px; font-size: 17px; color: #c9cdfc; }
+.lobby-difficulty[hidden] { display: none; }
+.lobby-difficulty input { width: 160px; accent-color: var(--super); cursor: pointer; }
+.lobby-difficulty input:disabled { cursor: default; opacity: 0.6; }
+.lobby-difficulty strong { font-weight: 400; min-width: 82px; text-align: left; color: var(--super); -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; }
