@@ -8,6 +8,18 @@ export interface Command {
   aimY: number;
   fire: boolean;
   superFire: boolean;
+  /** Movement was already applied by the caller (the server replays each client input). */
+  skipMove?: boolean;
+}
+
+export interface PlayerSlot {
+  name: string;
+  isBot: boolean;
+}
+
+export interface Point {
+  x: number;
+  y: number;
 }
 
 export interface Brawler {
@@ -84,7 +96,7 @@ export class World {
   private nextId = 1;
   private crateGrid: Int32Array; // tile index -> crate id, 0 when none
 
-  constructor(seed: number, names: string[]) {
+  constructor(seed: number, players: PlayerSlot[]) {
     this.map = generateMap(seed);
     this.crateGrid = new Int32Array(this.map.size * this.map.size);
     for (const t of this.map.crateTiles) {
@@ -92,12 +104,12 @@ export class World {
       this.crates.push(crate);
       this.crateGrid[t.y * this.map.size + t.x] = crate.id;
     }
-    names.forEach((name, i) => {
+    players.forEach((p, i) => {
       const s = this.map.spawns[i];
       this.brawlers.push({
         id: this.nextId++,
-        name,
-        isBot: i !== 0,
+        name: p.name,
+        isBot: p.isBot,
         x: s.x,
         y: s.y,
         moveX: 0,
@@ -204,7 +216,7 @@ export class World {
     }
     b.moveX = mx;
     b.moveY = my;
-    this.moveWithCollision(b, mx * BRAWLER.speed * dt, my * BRAWLER.speed * dt);
+    if (!cmd.skipMove) this.moveBody(b, mx, my, dt);
 
     const aimLen = Math.hypot(cmd.aimX, cmd.aimY);
     if (aimLen > 0.001) b.facing = Math.atan2(cmd.aimY, cmd.aimX);
@@ -214,14 +226,25 @@ export class World {
     else if (cmd.fire) this.fire(b);
   }
 
-  private moveWithCollision(b: Brawler, dx: number, dy: number) {
-    b.x += dx;
+  /**
+   * Moves a brawler-sized circle by a (clamped) input direction for one step.
+   * Public so the client can predict its own movement with the exact same rules.
+   */
+  moveBody(b: Point, moveX: number, moveY: number, dt: number) {
+    let mx = moveX;
+    let my = moveY;
+    const len = Math.hypot(mx, my);
+    if (len > 1) {
+      mx /= len;
+      my /= len;
+    }
+    b.x += mx * BRAWLER.speed * dt;
     this.resolveCollisions(b);
-    b.y += dy;
+    b.y += my * BRAWLER.speed * dt;
     this.resolveCollisions(b);
   }
 
-  private resolveCollisions(b: Brawler) {
+  private resolveCollisions(b: Point) {
     const r = BRAWLER.radius;
     const minX = Math.floor(b.x - r);
     const maxX = Math.floor(b.x + r);
@@ -354,12 +377,20 @@ export class World {
     crate.hp -= bullet.damage;
     this.events.push({ type: 'crateHit', crateId: crate.id });
     if (crate.hp > 0) return;
-    crate.alive = false;
-    this.crateGrid[crate.y * this.map.size + crate.x] = 0;
+    this.breakCrate(crate.id);
     const cx = crate.x + 0.5;
     const cy = crate.y + 0.5;
     this.cubes.push({ id: this.nextId++, x: cx, y: cy, alive: true });
     this.events.push({ type: 'crateBreak', crateId: crate.id, x: cx, y: cy });
+  }
+
+  /** Removes a crate from play (also used by clients replaying server events). */
+  breakCrate(id: number) {
+    const crate = this.crates.find((c) => c.id === id);
+    if (!crate || !crate.alive) return;
+    crate.alive = false;
+    crate.hp = 0;
+    this.crateGrid[crate.y * this.map.size + crate.x] = 0;
   }
 
   private damage(b: Brawler, amount: number, attacker: Brawler | null) {

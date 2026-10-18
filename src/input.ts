@@ -47,8 +47,9 @@ export class Input {
     private root: HTMLElement,
     superButton: HTMLElement,
   ) {
+    const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement;
     window.addEventListener('keydown', (e) => {
-      if (e.repeat) return;
+      if (e.repeat || typing(e)) return;
       this.keys.add(e.code);
       if (e.code === 'Space' || e.code === 'KeyE') {
         this.superHeld = true;
@@ -56,6 +57,7 @@ export class Input {
       }
     });
     window.addEventListener('keyup', (e) => {
+      if (typing(e)) return;
       this.keys.delete(e.code);
       if ((e.code === 'Space' || e.code === 'KeyE') && this.superHeld) {
         this.superHeld = false;
