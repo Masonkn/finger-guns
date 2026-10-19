@@ -32,6 +32,12 @@ A single small instance handles many matches. Each match uses about 30 KB/s of b
 - **Desktop:** WASD to move, the mouse to aim, click (or hold) to shoot. Hold Space, E or right-click to aim the super, then release to fire it. Q uses your kill-streak ability.
 - **Touch:** the left half of the screen is a floating move stick. On the right half, drag and release to shoot, or tap to auto-aim. Drag the yellow button to fire the super; tap the round ability button next to it.
 
+## Maps
+
+The arena is dressed for the time of year. Every American holiday has its own featured map in the days leading up to it (Valentine's Day, the 4th of July, Halloween, Thanksgiving, Christmas and the rest), and the rest of the year plays the season's map: Spring (round flowering bushes), Summer (tall grass), Fall or Winter. The menu shows today's featured map. Online, the server's date picks it (US Eastern), so everyone in a match sees the same one. In a vs-bots lobby, or as a private match host, the **Map** arrows pick any of the 21 maps; public matches always play the featured one. The look is only paint: the layout, bushes and walls play the same on every map.
+
+Dates and names are in `src/sim/themes.ts`; each map's colours, bushes, decorations and weather are in `src/render/themes.ts`. Screenshots of every map are in `docs/maps/`.
+
 ## Kill rewards and customization
 
 - Every knockout drops the victim's finger (plus any extra fingers they had collected). Picking one up adds a finger to your gun, up to 4 (the whole hand opens): each finger fires one more bullet in a narrow fan.
@@ -48,7 +54,7 @@ A single small instance handles many matches. Each match uses about 30 KB/s of b
 - `src/hud.ts` and `src/input.ts` handle the DOM overlay and the mouse, keyboard and touch controls.
 - Gameplay tuning lives in `src/sim/config.ts`.
 
-With the server running, `npx tsx scripts/netcheck.ts` runs a two-client smoke test: a private duos lobby (host-only mode and start, switching teams), input, shared team vision, bush hiding, and a player leaving.
+With the server running, `npx tsx scripts/netcheck.ts` runs a two-client smoke test: a private duos lobby (host-only mode, map and start, switching teams), input, shared team vision, bush hiding, and a player leaving.
 
 To play a batch of bot-only matches headlessly as a balance check:
 

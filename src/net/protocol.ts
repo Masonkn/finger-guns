@@ -3,6 +3,7 @@
 
 import type { BotDifficulty, TeamSize } from '../sim/config';
 import type { GameEvent } from '../sim/world';
+import type { MapChoice, MapTheme } from '../sim/themes';
 
 export const TICK_RATE = 30; // server simulation and snapshot rate, per second
 export const TICK = 1 / TICK_RATE;
@@ -27,6 +28,7 @@ export type ClientMessage =
   | { t: 'mode'; teamSize: TeamSize } // longest-waiting player picks solo or a team size
   | { t: 'difficulty'; level: BotDifficulty } // the longest-waiting player picks how well the bots play
   | { t: 'team'; team: number } // move to another team in the lobby
+  | { t: 'map'; map: MapChoice } // private host picks a map, or today's featured one
   // q: use the current kill-streak ability
   | { t: 'input'; seq: number; mx: number; my: number; ax: number; ay: number; f: 0 | 1; s: 0 | 1; q?: 0 | 1 }
   | { t: 'leave' };
@@ -101,17 +103,21 @@ export type ServerMessage =
       code: string | null;
       teamSize: TeamSize;
       difficulty: BotDifficulty;
+      map: MapChoice;
+      featured: MapTheme; // today's featured map, by the server's date
       players: LobbyPlayer[];
       startsIn: number | null; // public matches start on a timer
       canStart: boolean; // you are the host of a private match
       canSetDifficulty: boolean; // you have been in the lobby longest
       canSetMode: boolean; // same: the longest-waiting player picks solo or a team size
+      canSetMap: boolean; // private host only; public matches always play the featured map
     }
   | {
       t: 'start';
       seed: number;
       you: number;
       teamSize: TeamSize;
+      map?: MapTheme; // left out by older servers: summer
       players: { id: number; name: string; team: number; look: WireLook | null }[];
     }
   | Snapshot

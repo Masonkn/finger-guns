@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import { AMMO_KINDS, AmmoKind, BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize, teamCount } from '../src/sim/config';
 import { BotBrain } from '../src/sim/bot';
 import { Command, PlayerSlot, World, winnerLabel } from '../src/sim/world';
+import { MapChoice, featuredMap, resolveMap } from '../src/sim/themes';
 import {
   BrawlerState,
   ClientMessage,
@@ -51,6 +52,7 @@ export class Room {
   private lobbyClock = 0;
   private endedClock = 0;
   private lastLobbyBroadcast = -1;
+  map: MapChoice = 'featured';
 
   constructor(
     readonly id: string,
@@ -131,6 +133,12 @@ export class Room {
     this.broadcastLobby();
   }
 
+  setMap(client: Client, map: MapChoice) {
+    if (this.state !== 'lobby' || client !== this.host || map === this.map) return;
+    this.map = map;
+    this.broadcastLobby();
+  }
+
   setTeam(client: Client, team: number) {
     if (this.state !== 'lobby' || !this.clients.includes(client)) return;
     if (!Number.isInteger(team) || team < 0 || team >= teamCount(this.teamSize)) return;
@@ -191,11 +199,14 @@ export class Room {
         code: this.code,
         teamSize: this.teamSize,
         difficulty: this.difficulty,
+        map: this.map,
+        featured: featuredMap(),
         players,
         startsIn,
         canStart: c === host,
         canSetDifficulty: c === this.leader,
         canSetMode: c === this.leader,
+        canSetMap: c === host,
       });
     }
   }
@@ -234,7 +245,9 @@ export class Room {
       team: b.team,
       look: seats[i].client?.look ?? null,
     }));
-    for (const c of this.clients) send(c.ws, { t: 'start', seed, you: c.brawlerId!, teamSize: size, players });
+    // Everyone in the match gets the same map; 'featured' goes by the server's date.
+    const map = resolveMap(this.map);
+    for (const c of this.clients) send(c.ws, { t: 'start', seed, you: c.brawlerId!, teamSize: size, map, players });
   }
 
   private step() {

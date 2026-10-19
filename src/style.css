@@ -272,6 +272,8 @@ html, body {
 }
 .logo span:last-child { color: #fff; }
 .tagline { margin: 12px 0 18px; font-size: 18px; color: #c9cdfc; }
+.tagline:has(+ .featured-map) { margin-bottom: 4px; }
+.featured-map { margin: 0 0 16px; font-size: 17px; color: #ffd23a; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; }
 .btn {
   font: inherit;
   font-size: 28px;
@@ -472,9 +474,43 @@ html, body {
 .difficulty-note { font-family: system-ui, sans-serif; font-size: 13px; color: #9ea3dc; min-height: 0; }
 .difficulty-note:empty { display: none; }
 
+/* Lobby: map picker */
+.map-picker { display: flex; align-items: center; gap: 8px; }
+.map-name {
+  min-width: 220px;
+  max-width: 62vw;
+  font-size: 18px;
+  color: #fff;
+  text-align: center;
+  background: rgba(20, 16, 40, 0.5);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  padding: 6px 12px;
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+.map-step {
+  font: inherit;
+  font-size: 26px;
+  line-height: 1;
+  width: 44px;
+  height: 44px;
+  color: #fff;
+  background: linear-gradient(#ffd23a, #ff9a1f);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 3px 0 var(--ink);
+  cursor: pointer;
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+.map-step:disabled { visibility: hidden; }
+.map-step:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
 /* Touch screens: every menu control at least a fingertip (44px) tall, and no tap delay or zoom. */
 button, .lobby-team, .cz-swatch, .cz-topper { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 @media (pointer: coarse) {
+  .map-step { width: 50px; height: 50px; }
   .mode-chip, .difficulty-step { min-height: 48px; padding: 6px 16px; font-size: 19px; }
   .btn-small { min-height: 46px; padding: 8px 18px; }
   .join-form input { min-height: 46px; }

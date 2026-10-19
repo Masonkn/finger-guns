@@ -6,6 +6,10 @@ import { type Brawler, type World, ammoOf, fingerCount } from '../sim/world';
 import { type PlayerLook, handSurfaceColor } from './cosmetics';
 import { FingerLook, HandModel, buildFingerTrophy } from './hand';
 import { Particles } from './particles';
+import { AmbientFall, buildProps, hash, paintGround } from './dressing';
+import { THEME_LOOKS, type ThemeLook } from './themes';
+import type { MapTheme } from '../sim/themes';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   FadeUniforms,
   SwayUniforms,
@@ -57,6 +61,9 @@ export class GameScene {
   private clockTime = 0;
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.95);
+  private look: ThemeLook;
+  private ambient: AmbientFall | null = null;
+  private fireworkClock = 1;
 
   constructor(
     readonly renderer: THREE.WebGLRenderer,
@@ -64,14 +71,17 @@ export class GameScene {
     private playerId: number,
     private isVisible: (b: Brawler) => boolean,
     lookOf: (b: Brawler) => PlayerLook,
+    theme: MapTheme = 'summer',
   ) {
-    this.scene.background = new THREE.Color(0x1d2b4f);
+    const look = (this.look = THEME_LOOKS[theme]);
+    this.scene.background = new THREE.Color(look.sky);
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     this.camera.zoom = 1;
 
-    this.scene.add(new THREE.HemisphereLight(0xdff1ff, 0x6b5a7a, 1.4));
-    this.sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    const light = look.light ?? { sky: 0xdff1ff, ground: 0x6b5a7a, hemi: 1.4, sun: 2.2, sunColor: 0xffffff };
+    this.scene.add(new THREE.HemisphereLight(light.sky, light.ground, light.hemi));
+    this.sun = new THREE.DirectionalLight(light.sunColor, light.sun);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     const s = 18;
@@ -84,6 +94,11 @@ export class GameScene {
     this.buildWalls();
     this.buildBushes();
     this.buildCrates();
+    if (look.props) this.scene.add(buildProps(look.props, MAP_SIZE));
+    if (look.ambient) {
+      this.ambient = new AmbientFall(look.ambient.kind, look.ambient.colors, look.ambient.count ?? 80);
+      this.scene.add(this.ambient.mesh);
+    }
     this.poisonGround = this.buildPoisonGround();
     this.poison = this.buildPoisonClouds();
     this.scene.add(this.particles.mesh);
@@ -216,6 +231,8 @@ export class GameScene {
     this.syncFingers();
     this.syncAmmoPickups();
     this.updatePoison();
+    this.ambient?.update(dt, this.camTarget.x, this.camTarget.z);
+    this.launchFireworks(dt);
     this.particles.update(dt);
 
     // See-through fades centred on the player.
@@ -360,33 +377,7 @@ export class GameScene {
 
   private buildGround() {
     const size = MAP_SIZE;
-    // Bright lawn: a two-green checker with little light and dark tufts on every tile.
-    const px = 32;
-    const c = document.createElement('canvas');
-    c.width = c.height = size * px;
-    const g = c.getContext('2d')!;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        g.fillStyle = (x + y) % 2 === 0 ? '#86d64f' : '#7bcb47';
-        g.fillRect(x * px, y * px, px, px);
-      }
-    }
-    g.lineWidth = 2;
-    g.lineCap = 'round';
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        for (let k = 0; k < 3; k++) {
-          const tx = x * px + 4 + hash(x, y, k) * (px - 8);
-          const ty = y * px + 6 + hash(y, x, k + 5) * (px - 10);
-          g.strokeStyle = hash(x, k, y) < 0.5 ? '#9fe66a' : '#6ab83c';
-          g.beginPath();
-          g.moveTo(tx - 3, ty - 4);
-          g.lineTo(tx, ty + 1);
-          g.lineTo(tx + 3, ty - 4);
-          g.stroke();
-        }
-      }
-    }
+    const c = paintGround(this.look, size, 32);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
@@ -397,11 +388,11 @@ export class GameScene {
     this.scene.add(ground);
 
     // Raised rim and outer border so the arena reads like a board.
-    const border = new THREE.Mesh(new THREE.PlaneGeometry(size + 60, size + 60), toon(0x26395e));
+    const border = new THREE.Mesh(new THREE.PlaneGeometry(size + 60, size + 60), toon(this.look.border));
     border.rotation.x = -Math.PI / 2;
     border.position.set(size / 2, -0.02, size / 2);
     this.scene.add(border);
-    const rimMat = toon(0x8a5a2e); // dirt-brown edge frames the lawn
+    const rimMat = toon(this.look.rim); // a raised edge frames the arena
     for (let i = 0; i < 4; i++) {
       const horizontal = i < 2;
       const rim = new THREE.Mesh(new THREE.BoxGeometry(horizontal ? size + 1 : 0.5, 0.5, horizontal ? 0.5 : size + 1), rimMat);
@@ -426,15 +417,17 @@ export class GameScene {
     const mat = toon(0xffffff, { map: brickTexture() });
     addFade(mat, this.wallFade);
     const walls = new THREE.InstancedMesh(geo, mat, cells.length);
-    const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.045, 0x141a45, this.wallFade), cells.length);
+    const look = this.look;
+    const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.045, look.wallEdge ?? 0x141a45, this.wallFade), cells.length);
     const col = new THREE.Color();
     cells.forEach(([x, y], i) => {
       this.dummy.position.set(x + 0.5, 0, y + 0.5);
       this.dummy.updateMatrix();
       walls.setMatrixAt(i, this.dummy.matrix);
       hull.setMatrixAt(i, this.dummy.matrix);
-      const v = ((x * 7 + y * 13) % 5) / 5;
-      walls.setColorAt(i, col.setHSL(0.6 + v * 0.025, 0.75, 0.5 + v * 0.06));
+      const n = look.walls.length;
+      const pick = look.wallPattern === 'checker' ? (x + y) % n : look.wallPattern === 'rows' ? (x + y) % (n * 2) >> 1 : (x * 7 + y * 13) % n;
+      walls.setColorAt(i, col.set(look.walls[pick]));
     });
     walls.castShadow = true;
     walls.receiveShadow = true;
@@ -442,13 +435,28 @@ export class GameScene {
   }
 
   private buildBushes() {
-    // Tall grass: clusters of tapered, leaning blades per bush tile. Darker and more
-    // saturated than the lawn so the hiding spots stand out.
     const map = this.world.map;
     const cells: [number, number][] = [];
     for (let y = 0; y < map.size; y++) {
       for (let x = 0; x < map.size; x++) if (map.tiles[y * map.size + x] === Tile.Bush) cells.push([x, y]);
     }
+    const kind = this.look.bush.kind;
+    if (kind === 'grass') this.buildGrass(cells);
+    else if (kind === 'round') this.buildRoundBushes(cells);
+    else this.buildPines(cells);
+  }
+
+  /** Per-instance shade of the theme's bush colour: a little hue drift and lighter tips. */
+  private bushShade(col: THREE.Color, h: number, h2: number) {
+    const { color, spread = 0.04 } = this.look.bush;
+    const hsl = { h: 0, s: 0, l: 0 };
+    col.set(color).getHSL(hsl);
+    return col.setHSL(hsl.h + (h - 0.5) * spread, hsl.s, hsl.l + h2 * 0.1);
+  }
+
+  private buildGrass(cells: [number, number][]) {
+    // Tall grass: clusters of tapered, leaning blades per bush tile. Darker and more
+    // saturated than the lawn so the hiding spots stand out.
     const perTile = 9;
     const geo = new THREE.ConeGeometry(0.11, 1, 5, 3, true);
     geo.translate(0, 0.5, 0);
@@ -468,7 +476,7 @@ export class GameScene {
     const blades = new THREE.InstancedMesh(geo, mat, cells.length * perTile);
     const hull = new THREE.InstancedMesh(
       geo,
-      outlineMaterial(0.03, 0x0d2a14, this.bushFade, this.grassSway),
+      outlineMaterial(0.03, this.look.bush.edge, this.bushFade, this.grassSway),
       cells.length * perTile,
     );
     const col = new THREE.Color();
@@ -488,13 +496,169 @@ export class GameScene {
         this.dummy.updateMatrix();
         blades.setMatrixAt(i, this.dummy.matrix);
         hull.setMatrixAt(i, this.dummy.matrix);
-        blades.setColorAt(i, col.setHSL(0.34 + h2 * 0.04, 0.78, 0.36 + h3 * 0.1));
+        blades.setColorAt(i, this.bushShade(col, h2, h3));
         i++;
       }
     }
     blades.castShadow = true;
     blades.frustumCulled = hull.frustumCulled = false; // swaying tips can leave the static bounds
     this.scene.add(blades, hull);
+  }
+
+  private buildRoundBushes(cells: [number, number][]) {
+    // Leafy balls, three to a tile, like the very first version of the arena.
+    const perTile = 3;
+    const radius = 0.42;
+    const geo = new THREE.IcosahedronGeometry(radius, 1);
+    const mat = toon(0xffffff);
+    addFade(mat, this.bushFade);
+    const bushes = new THREE.InstancedMesh(geo, mat, cells.length * perTile);
+    const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.04, this.look.bush.edge, this.bushFade), cells.length * perTile);
+    const col = new THREE.Color();
+    const spots: THREE.Vector3[] = []; // points on the bushes' upper surface, for accents
+    let i = 0;
+    for (const [x, y] of cells) {
+      for (let k = 0; k < perTile; k++) {
+        const h = hash(x, y, k);
+        const scale = 0.95 + h * 0.35;
+        this.dummy.position.set(x + 0.2 + h * 0.6, 0.45 + hash(y, x, k) * 0.25, y + 0.2 + hash(k, x, y) * 0.6);
+        this.dummy.rotation.set(h * 3, h * 5, 0);
+        this.dummy.scale.setScalar(scale);
+        this.dummy.updateMatrix();
+        bushes.setMatrixAt(i, this.dummy.matrix);
+        hull.setMatrixAt(i, this.dummy.matrix);
+        bushes.setColorAt(i, this.bushShade(col, h, hash(k, y, x)));
+        for (let a = 0; a < 3; a++) {
+          const theta = hash(x + a, y, k + 20) * Math.PI * 2;
+          const phi = 0.25 + hash(y, x + a, k + 21) * 1.0; // from the top down towards the side
+          const r = radius * scale * 0.98;
+          spots.push(
+            new THREE.Vector3(Math.sin(phi) * Math.cos(theta), Math.cos(phi), Math.sin(phi) * Math.sin(theta))
+              .multiplyScalar(r)
+              .add(this.dummy.position),
+          );
+        }
+        i++;
+      }
+    }
+    bushes.castShadow = true;
+    this.scene.add(bushes, hull);
+    this.buildAccents(cells, spots, 3 * perTile);
+  }
+
+  private buildPines(cells: [number, number][]) {
+    // A little fir tree per tile: three stacked cones, white-tipped when it's snowy.
+    const tiers: THREE.BufferGeometry[] = [];
+    const tierShape = [
+      [0.5, 0.75, 0.2],
+      [0.4, 0.6, 0.62],
+      [0.28, 0.5, 0.98],
+    ];
+    const green = new THREE.Color(1, 1, 1);
+    const snow = new THREE.Color(1, 1, 1);
+    this.bushShade(green, 0.5, 0);
+    for (const [r, hgt, base] of tierShape) {
+      const cone = new THREE.ConeGeometry(r, hgt, 8, 3);
+      cone.translate(0, base + hgt / 2, 0);
+      const pos = cone.getAttribute('position');
+      const colors = new Float32Array(pos.count * 3);
+      for (let v = 0; v < pos.count; v++) {
+        const k = (pos.getY(v) - base) / hgt;
+        const c = this.look.snowCaps && k > 0.55 ? snow : green;
+        colors.set([c.r, c.g, c.b], v * 3);
+      }
+      cone.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      tiers.push(cone.toNonIndexed());
+    }
+    const trunk = new THREE.CylinderGeometry(0.08, 0.1, 0.3, 6).toNonIndexed();
+    trunk.translate(0, 0.15, 0);
+    const brown = new THREE.Color(0x6a4426);
+    trunk.setAttribute('color', new THREE.BufferAttribute(new Float32Array(trunk.getAttribute('position').count * 3).map((_, j) => [brown.r, brown.g, brown.b][j % 3]), 3));
+    for (const t of [...tiers, trunk]) t.deleteAttribute('uv');
+    const geo = mergeGeometries([trunk, ...tiers])!;
+    geo.computeVertexNormals();
+
+    const mat = toon(0xffffff, { vertexColors: true });
+    addFade(mat, this.bushFade);
+    const trees = new THREE.InstancedMesh(geo, mat, cells.length);
+    const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.035, this.look.bush.edge, this.bushFade), cells.length);
+    const col = new THREE.Color();
+    const spots: THREE.Vector3[] = [];
+    cells.forEach(([x, y], i) => {
+      const h = hash(x, y, 1);
+      const scale = 0.9 + h * 0.25;
+      this.dummy.position.set(x + 0.5 + (h - 0.5) * 0.15, 0, y + 0.5 + (hash(y, x, 2) - 0.5) * 0.15);
+      this.dummy.rotation.set(0, h * Math.PI * 2, 0);
+      this.dummy.scale.setScalar(scale);
+      this.dummy.updateMatrix();
+      trees.setMatrixAt(i, this.dummy.matrix);
+      hull.setMatrixAt(i, this.dummy.matrix);
+      trees.setColorAt(i, col.setScalar(0.88 + hash(y, x, 3) * 0.12));
+      for (let a = 0; a < 8; a++) {
+        const [r, hgt, base] = tierShape[a % 3];
+        const k = 0.1 + hash(x, y + a, 4) * 0.5; // how far up the tier
+        const theta = hash(y + a, x, 5) * Math.PI * 2;
+        const rr = r * (1 - k) * scale;
+        spots.push(
+          new THREE.Vector3(Math.cos(theta) * rr, (base + k * hgt) * scale, Math.sin(theta) * rr).add(this.dummy.position),
+        );
+      }
+    });
+    trees.castShadow = true;
+    this.scene.add(trees, hull);
+    this.buildAccents(cells, spots, 8);
+  }
+
+  /** Flowers, fairy lights, gold coins, eggs or pumpkins dotted on the bushes. */
+  private buildAccents(cells: [number, number][], spots: THREE.Vector3[], spotsPerTile: number) {
+    const acc = this.look.accents;
+    if (!acc || spots.length === 0) return;
+    const size = acc.size ?? 0.08;
+    const geo = new THREE.IcosahedronGeometry(size, acc.egg || size > 0.1 ? 2 : 1);
+    if (acc.egg) geo.scale(1, 1.35, 1);
+    const mat = acc.glow ? new THREE.MeshBasicMaterial({ color: 0xffffff }) : toon(0xffffff);
+    addFade(mat, this.bushFade);
+    const picks: THREE.Vector3[] = [];
+    cells.forEach((_, t) => {
+      for (let a = 0; a < acc.perTile; a++) {
+        const s = spots[t * spotsPerTile + Math.floor(hash(t, a, 31) * spotsPerTile)];
+        if (s) picks.push(s);
+      }
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, picks.length);
+    const col = new THREE.Color();
+    picks.forEach((p, i) => {
+      this.dummy.position.copy(p);
+      this.dummy.rotation.set(0, hash(i, 2, 3) * 6, (hash(i, 3, 2) - 0.5) * 0.6);
+      this.dummy.scale.setScalar(0.85 + hash(i, 1, 4) * 0.3);
+      this.dummy.updateMatrix();
+      mesh.setMatrixAt(i, this.dummy.matrix);
+      mesh.setColorAt(i, col.set(acc.colors[i % acc.colors.length]));
+    });
+    this.scene.add(mesh);
+    if (!acc.glow) {
+      const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.02, 0x1a1422, this.bushFade), picks.length);
+      for (let i = 0; i < picks.length; i++) {
+        mesh.getMatrixAt(i, this.dummy.matrix);
+        hull.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.scene.add(hull);
+    }
+  }
+
+  /** Bursts of sparks high over the arena, for the 4th of July and New Year's. */
+  private launchFireworks(dt: number) {
+    const colors = this.look.fireworks;
+    if (!colors) return;
+    this.fireworkClock -= dt;
+    if (this.fireworkClock > 0) return;
+    this.fireworkClock = 1.6 + Math.random() * 1.8;
+    const x = this.camTarget.x + (Math.random() - 0.5) * 16;
+    const z = this.camTarget.z + (Math.random() - 0.5) * 16;
+    const y = 6 + Math.random() * 2;
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    this.particles.burst(x, y, z, 28, color, { speed: 4.5, size: 0.13, life: 1.1, gravity: 1.5, up: 0.6 });
+    this.particles.burst(x, y, z, 8, 0xffffff, { speed: 2, size: 0.1, life: 0.6, gravity: 1, up: 0.4 });
   }
 
   private buildCrates() {
@@ -828,11 +992,6 @@ function brickTexture(): THREE.CanvasTexture {
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
-}
-
-function hash(a: number, b: number, c: number): number {
-  const s = Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453;
-  return s - Math.floor(s);
 }
 
 /**

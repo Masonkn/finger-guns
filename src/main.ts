@@ -23,6 +23,7 @@ import {
 import { type LobbyPlayer, type ServerMessage, cleanName } from './net/protocol';
 import { GameScene, createRenderer } from './render/scene';
 import { type World, ammoOf } from './sim/world';
+import { MAP_THEMES, MAP_THEME_NAMES, type MapChoice, type MapTheme, featuredMap, resolveMap } from './sim/themes';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -118,7 +119,7 @@ function disconnect() {
 function beginMatch(match: Match, mode: Mode) {
   stopMatch();
   const visible = match.isVisible.bind(match);
-  const scene = new GameScene(renderer, match.world, match.playerId, visible, match.lookOf.bind(match));
+  const scene = new GameScene(renderer, match.world, match.playerId, visible, match.lookOf.bind(match), match.mapTheme);
   if (!input) input = new Input(scene, hudRoot, superButton, abilityButton);
   else input.setScene(scene);
   const hud = new Hud(hudRoot, match.world, scene, match.playerId, superButton, abilityButton, visible);
@@ -136,6 +137,8 @@ function beginMatch(match: Match, mode: Mode) {
 // Everyone passes through the lobby before a match: pick solo or a team size, see who's in.
 let teamSize: TeamSize = loadTeamSize();
 let difficulty: BotDifficulty = loadDifficulty();
+// Not remembered between visits, so each visit starts on whatever map is featured that day.
+let botsMap: MapChoice = 'featured';
 let lobbyMode: Mode | null = null; // the lobby on screen, if any
 let lastLobby: LobbyMessage | null = null;
 
@@ -189,6 +192,10 @@ interface LobbyView {
   canPickTeam: boolean;
   difficulty: BotDifficulty | null; // null hides the picker
   canPickDifficulty: boolean;
+  map: MapChoice;
+  featured: MapTheme;
+  canPickMap: boolean;
+  mapNote: string;
 }
 
 function openBotsLobby() {
@@ -212,6 +219,10 @@ function renderBotsLobby() {
     canPickTeam: false,
     difficulty,
     canPickDifficulty: true,
+    map: botsMap,
+    featured: featuredMap(),
+    canPickMap: true,
+    mapNote: '',
   });
 }
 
@@ -237,6 +248,10 @@ function renderServerLobby(msg: LobbyMessage, status?: string) {
     canPickTeam: msg.teamSize > 1 && !status,
     difficulty: msg.difficulty,
     canPickDifficulty: msg.canSetDifficulty && !status,
+    map: msg.map,
+    featured: msg.featured,
+    canPickMap: msg.canSetMap && !status,
+    mapNote: status || msg.canSetMap ? '' : msg.code ? `${host?.name ?? 'The host'} picks the map` : 'Online matches play the featured map',
   });
 }
 
@@ -266,6 +281,12 @@ function renderLobby(v: LobbyView) {
     $('#difficulty-note').textContent =
       v.canPickDifficulty || !leader || leader.isYou ? '' : `${leader.name} picks the mode and how well the bots play`;
   }
+
+  $('#map-name').textContent = mapLabel(v.map, v.featured);
+  $<HTMLButtonElement>('#map-prev').disabled = !v.canPickMap;
+  $<HTMLButtonElement>('#map-next').disabled = !v.canPickMap;
+  $('#map-note').textContent = v.mapNote;
+  shownMap = v.map;
 
   $('#lobby-modes').replaceChildren(
     ...TEAM_SIZES.map((size) => {
@@ -325,6 +346,28 @@ function renderLobby(v: LobbyView) {
   box.replaceChildren(...cards);
 }
 
+const MAP_CHOICES: MapChoice[] = ['featured', ...MAP_THEMES];
+let shownMap: MapChoice = 'featured';
+
+function mapLabel(map: MapChoice, featured: MapTheme): string {
+  return map === 'featured' ? `★ Featured: ${MAP_THEME_NAMES[featured]}` : MAP_THEME_NAMES[map];
+}
+
+function stepMap(by: number) {
+  const i = MAP_CHOICES.indexOf(shownMap);
+  const map = MAP_CHOICES[(i + by + MAP_CHOICES.length) % MAP_CHOICES.length];
+  if (lobbyMode?.kind === 'bots') {
+    botsMap = map;
+    renderBotsLobby();
+  } else if (lastLobby?.canSetMap) {
+    conn?.send({ t: 'map', map });
+  }
+}
+
+$('#map-prev').addEventListener('click', () => stepMap(-1));
+$('#map-next').addEventListener('click', () => stepMap(1));
+$('#featured-map').textContent = `★ Featured map: ${MAP_THEME_NAMES[featuredMap()]}`;
+
 function pickDifficulty(level: BotDifficulty) {
   saveDifficulty(level);
   if (lobbyMode?.kind === 'bots') renderBotsLobby();
@@ -355,11 +398,14 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
       code: null,
       teamSize,
       difficulty,
+      map: 'featured',
+      featured: featuredMap(),
       players: [{ name, isYou: true, isHost: false, team: 0 }],
       startsIn: null,
       canStart: false,
       canSetDifficulty: false,
       canSetMode: false,
+      canSetMap: false,
     },
     'Connecting…',
   );
@@ -451,7 +497,7 @@ window.addEventListener('keydown', (e) => {
 function startBotsMatch() {
   disconnect();
   lobbyMode = null;
-  beginMatch(new LocalMatch(currentName(), playerLook, teamSize, difficulty), { kind: 'bots' });
+  beginMatch(new LocalMatch(currentName(), playerLook, teamSize, difficulty, resolveMap(botsMap)), { kind: 'bots' });
 }
 
 function startMode(mode: Mode) {

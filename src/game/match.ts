@@ -1,6 +1,7 @@
 import type { PlayerIntent } from '../input';
 import type { PlayerLook } from '../render/cosmetics';
 import type { Brawler, World } from '../sim/world';
+import type { MapTheme } from '../sim/themes';
 
 export interface MatchResult {
   rank: number;
@@ -16,6 +17,8 @@ export interface MatchResult {
 export interface Match {
   readonly world: World;
   readonly playerId: number;
+  /** Which season or holiday the arena is dressed for. */
+  readonly mapTheme: MapTheme;
   /** Whether the local player can currently see this brawler (bushes hide enemies). */
   isVisible(b: Brawler): boolean;
   /** Hand colour and thumb topper each brawler wears. */

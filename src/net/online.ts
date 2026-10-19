@@ -3,6 +3,7 @@ import type { PlayerIntent } from '../input';
 import { DEFAULT_LOOK, type PlayerLook, type TopperId, isGloveId, isTopperId, randomLook } from '../render/cosmetics';
 import { AMMO, AMMO_KINDS, AmmoKind, BRAWLER, RAPID_FIRE_SHOT_COOLDOWN, SUPER } from '../sim/config';
 import { Brawler, Point, World, ammoOf } from '../sim/world';
+import { type MapTheme, isMapTheme } from '../sim/themes';
 import type { Connection } from './connection';
 import {
   type WireLook,
@@ -38,6 +39,7 @@ interface Received {
 export class OnlineMatch implements Match {
   readonly world: World;
   readonly playerId: number;
+  readonly mapTheme: MapTheme;
   result: MatchResult | null = null;
   /** Counts of prediction misses, for debugging feel. */
   readonly stats = { snapshots: 0, corrections: 0, maxError: 0 };
@@ -71,6 +73,7 @@ export class OnlineMatch implements Match {
       if (this.world.brawlers[i].id !== p.id) throw new Error('Arena mismatch with server');
     });
     this.playerId = start.you;
+    this.mapTheme = isMapTheme(start.map) ? start.map : 'summer';
     // Bots (and anyone who sent no look) get a random one; it only has to look varied.
     for (const p of start.players) {
       const look = p.look && isTopperId(p.look.topper) ? fromWire(p.look, p.look.topper) : randomLook();
