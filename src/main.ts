@@ -8,15 +8,22 @@ import { loadLook } from './render/cosmetics';
 import { Connection } from './net/connection';
 import { OnlineMatch } from './net/online';
 import {
+  BLOCK_CHOICE_NAMES,
   BOT_DIFFICULTY_NAMES,
+  BlockChoice,
   BotDifficulty,
   DEFAULT_BOT_DIFFICULTY,
+  GAME_MODES,
+  GAME_MODE_NAMES,
+  GameMode,
   PLAYER_COUNT,
   SUPER,
   TEAM_MODE_NAMES,
   TEAM_SIZES,
   TeamSize,
+  isBlockChoice,
   isBotDifficulty,
+  isGameMode,
   isTeamSize,
   teamCount,
 } from './sim/config';
@@ -137,6 +144,8 @@ function beginMatch(match: Match, mode: Mode) {
 // Everyone passes through the lobby before a match: pick solo or a team size, see who's in.
 let teamSize: TeamSize = loadTeamSize();
 let difficulty: BotDifficulty = loadDifficulty();
+let gameMode: GameMode = loadPref('fg-game', isGameMode, 'showdown');
+let blocks: BlockChoice = loadPref('fg-blocks', isBlockChoice, 'pick');
 // Not remembered between visits, so each visit starts on whatever map is featured that day.
 let botsMap: MapChoice = 'featured';
 let lobbyMode: Mode | null = null; // the lobby on screen, if any
@@ -180,6 +189,23 @@ function saveDifficulty(level: BotDifficulty) {
   }
 }
 
+function loadPref<T>(key: string, valid: (v: unknown) => v is T, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return valid(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function savePref(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Not remembered in private mode.
+  }
+}
+
 interface LobbyView {
   title: string;
   code: string | null;
@@ -196,6 +222,9 @@ interface LobbyView {
   featured: MapTheme;
   canPickMap: boolean;
   mapNote: string;
+  game: GameMode | null; // null hides the game picker (public lobbies are always showdown)
+  blocks: BlockChoice;
+  canPickGame: boolean;
 }
 
 function openBotsLobby() {
@@ -212,7 +241,12 @@ function renderBotsLobby() {
     code: null,
     teamSize,
     players: [{ name: currentName(), isYou: true, isHost: true, team: 0 }],
-    status: teamSize > 1 ? 'Bots fill your team and every other spot' : `You vs ${PLAYER_COUNT - 1} bots`,
+    status:
+      gameMode === 'propHunt'
+        ? `You and ${PLAYER_COUNT - 1} bots · one seeker hunts everyone else`
+        : teamSize > 1
+          ? 'Bots fill your team and every other spot'
+          : `You vs ${PLAYER_COUNT - 1} bots`,
     canStart: true,
     startLabel: 'START',
     canPickMode: true,
@@ -223,6 +257,9 @@ function renderBotsLobby() {
     featured: featuredMap(),
     canPickMap: true,
     mapNote: '',
+    game: gameMode,
+    blocks,
+    canPickGame: true,
   });
 }
 
@@ -252,11 +289,30 @@ function renderServerLobby(msg: LobbyMessage, status?: string) {
     featured: msg.featured,
     canPickMap: msg.canSetMap && !status,
     mapNote: status || msg.canSetMap ? '' : msg.code ? `${host?.name ?? 'The host'} picks the map` : 'Online matches play the featured map',
+    game: msg.code ? (msg.game ?? 'showdown') : null,
+    blocks: msg.blocks ?? 'pick',
+    canPickGame: !!msg.canSetGame && !status,
   });
 }
 
 function renderLobby(v: LobbyView) {
   $('#lobby-title').textContent = v.title;
+  const propHunt = v.game === 'propHunt';
+  $('#lobby-game').hidden = v.game === null;
+  $('#game-steps').replaceChildren(
+    ...GAME_MODES.map((game) => stepButton(GAME_MODE_NAMES[game], game === v.game, v.canPickGame, () => pickGame(game))),
+  );
+  const host = v.players.find((p) => p.isHost);
+  $('#game-note').textContent = v.canPickGame || !host ? '' : `${host.name} picks the game`;
+  $('#lobby-blocks').hidden = !propHunt;
+  $('#blocks-steps').replaceChildren(
+    ...(['pick', 'random'] as const).map((b) =>
+      stepButton(b === 'pick' ? 'Pick one' : 'Random', b === v.blocks, v.canPickGame, () => pickBlocks(b), BLOCK_CHOICE_NAMES[b]),
+    ),
+  );
+  // Prop hunt is everyone for themselves, so there are no teams to pick.
+  $('#lobby-modes').hidden = propHunt;
+  if (propHunt) v = { ...v, teamSize: 1, canPickTeam: false };
   $('#lobby-code').hidden = !v.code;
   $('#lobby-code-value').textContent = v.code ?? '';
   const start = $('#lobby-start');
@@ -346,6 +402,32 @@ function renderLobby(v: LobbyView) {
   box.replaceChildren(...cards);
 }
 
+/** A big tap-friendly toggle for the lobby, like the bot difficulty steps. */
+function stepButton(label: string, on: boolean, enabled: boolean, pick: () => void, title = label): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.className = `difficulty-step${on ? ' mode-on' : ''}`;
+  b.textContent = label;
+  b.title = title;
+  b.disabled = !enabled && !on;
+  b.setAttribute('aria-pressed', String(on));
+  b.addEventListener('click', () => enabled && pick());
+  return b;
+}
+
+function pickGame(game: GameMode) {
+  gameMode = game;
+  savePref('fg-game', game);
+  if (lobbyMode?.kind === 'bots') renderBotsLobby();
+  else if (lastLobby?.canSetGame && lastLobby.game !== game) conn?.send({ t: 'game', game });
+}
+
+function pickBlocks(choice: BlockChoice) {
+  blocks = choice;
+  savePref('fg-blocks', choice);
+  if (lobbyMode?.kind === 'bots') renderBotsLobby();
+  else if (lastLobby?.canSetGame && lastLobby.blocks !== choice) conn?.send({ t: 'blocks', blocks: choice });
+}
+
 const MAP_CHOICES: MapChoice[] = ['featured', ...MAP_THEMES];
 let shownMap: MapChoice = 'featured';
 
@@ -428,7 +510,7 @@ async function playOnline(mode: Exclude<Mode, { kind: 'bots' }>) {
   };
   const look = { color: playerLook.color, topper: playerLook.topper, glove: playerLook.glove, sleeve: playerLook.sleeve };
   if (mode.kind === 'code') c.send({ t: 'join', name, look, mode: 'code', code: mode.code });
-  else if (mode.kind === 'create') c.send({ t: 'join', name, look, mode: 'create', teamSize, difficulty });
+  else if (mode.kind === 'create') c.send({ t: 'join', name, look, mode: 'create', teamSize, difficulty, game: gameMode, blocks });
   else c.send({ t: 'join', name, look, mode: 'quick', teamSize, difficulty });
 }
 
@@ -497,7 +579,7 @@ window.addEventListener('keydown', (e) => {
 function startBotsMatch() {
   disconnect();
   lobbyMode = null;
-  beginMatch(new LocalMatch(currentName(), playerLook, teamSize, difficulty, resolveMap(botsMap)), { kind: 'bots' });
+  beginMatch(new LocalMatch(currentName(), playerLook, teamSize, difficulty, resolveMap(botsMap), gameMode, blocks), { kind: 'bots' });
 }
 
 function startMode(mode: Mode) {
@@ -529,6 +611,8 @@ $('#to-menu').addEventListener('click', () => showMenu());
 
 function autoAimDirection(match: Match, range: number): { x: number; y: number } | null {
   const { world } = match;
+  // Prop hunt: aiming at the nearest hand would point straight at a hidden hider. Shoot where you face.
+  if (world.propHunt) return null;
   const p = world.brawlers.find((b) => b.id === match.playerId)!;
   let best: { x: number; y: number } | null = null;
   let bestD = range;
@@ -575,6 +659,7 @@ function frame(now: number) {
       intent.aimY = d.y;
     }
   }
+  intent.prop = hud.takeProp();
   match.update(dt, intent);
 
   for (const e of world.events) {
@@ -587,6 +672,13 @@ function frame(now: number) {
       hud.announce(`${nameOf(world, e.sharedBy)} shared a power cube!`, 1.6);
     }
     if (e.type === 'ammoPickup' && e.brawlerId === player.id) hud.ammoPickedUp(e.kind);
+    if (e.type === 'found' && e.byId === player.id) {
+      const left = world.brawlers.filter((b) => b.alive && !world.isSeeker(b)).length;
+      hud.announce(`Found ${nameOf(world, e.brawlerId)}! ${left} still hiding`, 2);
+    }
+    if (e.type === 'roundStart' && e.round > 1) {
+      hud.announce(e.seekerId === player.id ? `Round ${e.round}: you're it!` : `Round ${e.round}: ${nameOf(world, e.seekerId)} is it!`, 3);
+    }
   }
   scene.render(dt, { x: intent.aimX, y: intent.aimY, active: intent.aimActive, isSuper: intent.superAiming });
   world.events.length = 0;
@@ -598,9 +690,12 @@ function frame(now: number) {
     const title = $('.end-rank');
     title.textContent = result.rank === 1 ? 'Winner!' : `#${result.rank}`;
     title.classList.toggle('end-win', result.rank === 1);
-    const stats = `${result.kills} knockout${result.kills === 1 ? '' : 's'} · ${result.cubes} power cube${result.cubes === 1 ? '' : 's'}`;
+    const stats =
+      result.wins !== undefined
+        ? `Won ${result.wins} of ${world.propHunt?.rounds ?? 3} rounds · found ${result.kills} hider${result.kills === 1 ? '' : 's'} as seeker`
+        : `${result.kills} knockout${result.kills === 1 ? '' : 's'} · ${result.cubes} power cube${result.cubes === 1 ? '' : 's'}`;
     const winner = result.rank !== 1 && result.winner ? ` · ${result.winner} won` : '';
-    $('.end-sub').textContent = stats + winner;
+    $('#end .end-sub').textContent = stats + winner;
     quitButton.style.display = 'none';
     show('end');
   }

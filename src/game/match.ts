@@ -8,6 +8,7 @@ export interface MatchResult {
   kills: number;
   cubes: number;
   winner: string | null;
+  wins?: number; // prop hunt rounds won
 }
 
 /**

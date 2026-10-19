@@ -8,15 +8,20 @@ import {
   AmmoKind,
   AmmoStats,
   BRAWLER,
+  BlockChoice,
   BURN,
   CHILL,
   BULLET,
   CRATE,
   DASH_SPEED_MULTIPLIER,
   FINGERS,
+  GameMode,
   MAP_SIZE,
   PICKUP_AMMO_KINDS,
   POWER_CUBE,
+  PROP_HUNT,
+  PROP_KINDS,
+  PropKind,
   RAPID_FIRE_SHOT_COOLDOWN,
   STREAK,
   SUPER,
@@ -37,6 +42,8 @@ export interface Command {
   ability?: AbilityKind | 'auto' | null;
   /** Movement was already applied by the caller (the server replays each client input). */
   skipMove?: boolean;
+  /** Prop hunt: a hider picks the block to look like (only while hiding, when blocks are picked). */
+  prop?: PropKind | null;
 }
 
 export interface PlayerSlot {
@@ -88,6 +95,27 @@ export interface Brawler {
   burnUntil: number;
   burnById: number | null; // who set it on fire, for the knockout
   chillUntil: number;
+  /** Prop hunt: the block a hider is disguised as; null for the seeker and in showdown. */
+  prop: PropKind | null;
+  lastRerollAt: number;
+  roundWins: number; // prop hunt rounds this hand was the last one found in (or never found)
+  hiddenTime: number; // seconds spent hidden while the seeker was looking, the tie-breaker
+}
+
+export type PropHuntPhase = 'hide' | 'seek' | 'over';
+
+/** Prop hunt's round state. Plain data, so the server can send it to clients as it is. */
+export interface PropHuntState {
+  blocks: BlockChoice;
+  round: number; // 1-based
+  rounds: number;
+  phase: PropHuntPhase;
+  phaseEndsAt: number; // world time
+  seekerId: number;
+  found: number[]; // hiders found this round, in order
+  roundWinners: number[]; // who won the round that just ended
+  nextSeekerId: number | null; // the first hider found is it next round
+  wins: Record<number, number>; // brawler id -> rounds won
 }
 
 export interface Bullet {
@@ -155,7 +183,13 @@ export type GameEvent =
   | { type: 'fingerPickup'; brawlerId: number; fingerId: number; fromId: number; fingers: number; sharedBy?: number }
   | { type: 'ammoPickup'; brawlerId: number; pickupId: number; kind: AmmoKind }
   | { type: 'ability'; brawlerId: number; ability: AbilityKind }
-  | { type: 'abilityUnlock'; brawlerId: number; ability: AbilityKind };
+  | { type: 'abilityUnlock'; brawlerId: number; ability: AbilityKind }
+  // Prop hunt
+  | { type: 'found'; brawlerId: number; byId: number; x: number; y: number }
+  | { type: 'disguise'; brawlerId: number; prop: PropKind; x: number; y: number }
+  | { type: 'roundStart'; round: number; seekerId: number }
+  | { type: 'seekStart' }
+  | { type: 'roundOver'; winners: number[]; nextSeekerId: number | null };
 
 /** Who won, for the results screen: a name, or a team's names. Null until decided. */
 export function winnerLabel(world: World): string | null {
@@ -216,6 +250,8 @@ export class World {
   /** Set when one team is left: a surviving hand of the winning team, and that team. */
   winnerId: number | null = null;
   winnerTeam: number | null = null;
+  /** Set in prop hunt only. */
+  propHunt: PropHuntState | null = null;
   private nextId = 1;
   private crateGrid: Int32Array; // tile index -> crate id, 0 when none
   private rand: () => number; // for loot only; the arena itself comes from generateMap
@@ -225,6 +261,8 @@ export class World {
     seed: number,
     players: PlayerSlot[],
     readonly teamSize: TeamSize = 1,
+    readonly mode: GameMode = 'showdown',
+    blocks: BlockChoice = 'pick',
   ) {
     this.map = generateMap(seed, teamSize);
     this.crateGrid = new Int32Array(this.map.size * this.map.size);
@@ -274,10 +312,18 @@ export class World {
         burnUntil: 0,
         burnById: null,
         chillUntil: 0,
+        prop: null,
+        lastRerollAt: -10,
+        roundWins: 0,
+        hiddenTime: 0,
       });
     }
     // After the brawlers, so their ids match what an online client builds from the same seed.
     this.rand = mulberry32(seed ^ 0x5bd1e995);
+    if (mode === 'propHunt') {
+      this.startPropHunt(blocks);
+      return;
+    }
     for (let i = 0; i < AMMO_PICKUP.startCount; i++) this.spawnAmmoPickup();
   }
 
@@ -313,6 +359,12 @@ export class World {
   /** Whether `viewer` can currently see `target` (bushes hide brawlers unless close or shooting). */
   canSee(viewer: Brawler, target: Brawler): boolean {
     if (viewer.team === target.team) return true;
+    const ph = this.propHunt;
+    if (ph) {
+      // Hiders see everything; the seeker sees nothing at all while the sleep mask is on.
+      if (viewer.id !== ph.seekerId || target.id === ph.seekerId) return true;
+      if (ph.phase === 'hide') return false;
+    }
     if (!target.inBush) return true;
     if (this.time - target.lastShotAt < 0.6) return true;
     return Math.hypot(viewer.x - target.x, viewer.y - target.y) < BRAWLER.bushRevealDistance;
@@ -373,6 +425,18 @@ export class World {
     return this.isChilled(b) ? CHILL.speedMultiplier : 1;
   }
 
+  isSeeker(b: Brawler): boolean {
+    return this.propHunt?.seekerId === b.id;
+  }
+
+  /** False for the seeker while they sleep, and for everyone between prop hunt rounds. */
+  canMove(b: Brawler): boolean {
+    const ph = this.propHunt;
+    if (!ph) return true;
+    if (ph.phase === 'over') return false;
+    return !(ph.phase === 'hide' && b.id === ph.seekerId);
+  }
+
   abilityReady(b: Brawler, kind: AbilityKind): boolean {
     return abilityUnlocked(b, kind) && this.time >= b.abilityReadyAt[kind] && this.time >= b.abilityLockUntil;
   }
@@ -380,6 +444,10 @@ export class World {
   step(dt: number, commands: Map<number, Command>) {
     if (this.winnerId !== null) return;
     this.time += dt;
+    if (this.propHunt) {
+      this.stepPropHunt(dt, commands);
+      return;
+    }
     this.updateZone();
 
     for (const b of this.brawlers) {
@@ -411,6 +479,10 @@ export class World {
   }
 
   private applyCommand(b: Brawler, cmd: Command, dt: number) {
+    if (this.propHunt) {
+      this.applyPropHuntCommand(b, cmd, dt);
+      return;
+    }
     let mx = cmd.moveX;
     let my = cmd.moveY;
     const len = Math.hypot(mx, my);
@@ -636,7 +708,8 @@ export class World {
         return;
       }
       bullet.alive = false;
-      if (crate) this.damageCrate(crate, bullet);
+      // Crates can't be broken in prop hunt: they're hiding places, and hiders look like them.
+      if (crate && !this.propHunt) this.damageCrate(crate, bullet);
       return;
     }
     const owner = this.brawlers.find((b) => b.id === bullet.ownerId);
@@ -644,6 +717,10 @@ export class World {
       if (!b.alive || b.team === bullet.team) continue;
       if (Math.hypot(b.x - bullet.x, b.y - bullet.y) > BRAWLER.radius + BULLET.radius) continue;
       bullet.alive = false;
+      if (this.propHunt) {
+        if (owner) this.findHider(b, owner);
+        return;
+      }
       b.lastCombatAt = this.time;
       b.lastHitAt = this.time;
       if (this.isShielded(b)) {
@@ -858,5 +935,201 @@ export class World {
       }
     }
     this.cubes = this.cubes.filter((c) => c.alive);
+  }
+
+  // --- Prop hunt -------------------------------------------------------------
+
+  private startPropHunt(blocks: BlockChoice) {
+    // Power cubes and ammo boxes lie around doing nothing, so cube and box hiders have company.
+    for (let i = 0; i < PROP_HUNT.decoyCubes; i++) {
+      const p = this.randomOpenSpot();
+      if (p) this.cubes.push({ id: this.nextId++, x: p.x, y: p.y, alive: true });
+    }
+    for (let i = 0; i < PROP_HUNT.decoyAmmo; i++) this.spawnAmmoPickup();
+    const first = this.brawlers[Math.floor(this.rand() * this.brawlers.length)];
+    this.propHunt = {
+      blocks,
+      round: 0,
+      rounds: PROP_HUNT.rounds,
+      phase: 'hide',
+      phaseEndsAt: 0,
+      seekerId: first.id,
+      found: [],
+      roundWinners: [],
+      nextSeekerId: null,
+      wins: {},
+    };
+    this.startRound(first.id);
+  }
+
+  /** An open tile centre away from the middle and from other loot, for decoys. */
+  private randomOpenSpot(): Point | null {
+    const size = this.map.size;
+    for (let tries = 0; tries < 80; tries++) {
+      const tx = Math.floor(this.rand() * size);
+      const ty = Math.floor(this.rand() * size);
+      const x = tx + 0.5;
+      const y = ty + 0.5;
+      if (this.map.tiles[ty * size + tx] !== Tile.Empty || this.isSolid(tx, ty)) continue;
+      if (Math.hypot(x - MAP_SIZE / 2, y - MAP_SIZE / 2) < 4) continue;
+      if ([...this.cubes, ...this.ammoPickups].some((p) => Math.hypot(p.x - x, p.y - y) < 4)) continue;
+      return { x, y };
+    }
+    return null;
+  }
+
+  /** A random block, other than `not`. */
+  private randomProp(not: PropKind | null): PropKind {
+    const options = PROP_KINDS.filter((k) => k !== not);
+    return options[Math.floor(this.rand() * options.length)];
+  }
+
+  /** Everyone back on their feet: the seeker asleep in the middle, hiders spread around the edge. */
+  private startRound(seekerId: number) {
+    const ph = this.propHunt!;
+    ph.round++;
+    ph.phase = 'hide';
+    ph.phaseEndsAt = this.time + PROP_HUNT.hideTime;
+    ph.seekerId = seekerId;
+    ph.found = [];
+    ph.nextSeekerId = null;
+    this.bullets = [];
+    const c = MAP_SIZE / 2;
+    // Spawn spots in a different order each round, so nobody always starts in the same corner.
+    const spots = [...this.map.spawns];
+    for (let i = spots.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rand() * (i + 1));
+      [spots[i], spots[j]] = [spots[j], spots[i]];
+    }
+    let n = 0;
+    for (const b of this.brawlers) {
+      const seeker = b.id === seekerId;
+      const s = seeker ? { x: c, y: c } : spots[n++ % spots.length];
+      b.x = s.x;
+      b.y = s.y;
+      b.moveX = 0;
+      b.moveY = 0;
+      b.facing = seeker ? Math.PI / 2 : Math.atan2(c - s.y, c - s.x);
+      b.alive = true;
+      b.hp = b.maxHp;
+      b.ammo = BRAWLER.maxAmmo;
+      b.lastShotAt = -10;
+      b.lastHitAt = -10;
+      b.lastRerollAt = -10;
+      b.inBush = false;
+      // Everyone starts disguised; with picked blocks they can change while hiding.
+      b.prop = seeker ? null : this.randomProp(null);
+    }
+    this.events.push({ type: 'roundStart', round: ph.round, seekerId });
+  }
+
+  private stepPropHunt(dt: number, commands: Map<number, Command>) {
+    const ph = this.propHunt!;
+    for (const b of this.brawlers) {
+      if (!b.alive) continue;
+      const cmd = commands.get(b.id);
+      if (cmd) this.applyCommand(b, cmd, dt);
+      if (b.ammo < BRAWLER.maxAmmo) b.ammo = Math.min(BRAWLER.maxAmmo, b.ammo + dt / BRAWLER.reloadTime);
+      b.inBush = tileAt(this.map, b.x, b.y) === Tile.Bush;
+    }
+    this.updateBullets(dt);
+
+    if (ph.phase === 'hide') {
+      if (this.time >= ph.phaseEndsAt) {
+        ph.phase = 'seek';
+        ph.phaseEndsAt = this.time + PROP_HUNT.seekTime;
+        this.events.push({ type: 'seekStart' });
+      }
+    } else if (ph.phase === 'seek') {
+      const seeker = this.brawlers.find((b) => b.id === ph.seekerId)!;
+      for (const h of this.brawlers) {
+        if (!h.alive || h === seeker) continue;
+        h.hiddenTime += dt;
+        if (Math.hypot(h.x - seeker.x, h.y - seeker.y) < PROP_HUNT.tagDistance) this.findHider(h, seeker);
+      }
+      const left = this.brawlers.filter((b) => b.alive && b !== seeker);
+      // The last one found wins; if time runs out, everyone still hidden wins.
+      if (left.length === 0) this.endRound(ph.found.slice(-1));
+      else if (this.time >= ph.phaseEndsAt) this.endRound(left.map((b) => b.id));
+    } else if (this.time >= ph.phaseEndsAt) {
+      if (ph.round < ph.rounds) {
+        const others = this.brawlers.filter((b) => b.id !== ph.seekerId);
+        this.startRound(ph.nextSeekerId ?? others[Math.floor(this.rand() * others.length)].id);
+      } else {
+        this.finishPropHunt();
+      }
+    }
+  }
+
+  private applyPropHuntCommand(b: Brawler, cmd: Command, dt: number) {
+    const ph = this.propHunt!;
+    if (!this.canMove(b)) {
+      b.moveX = 0;
+      b.moveY = 0;
+      return;
+    }
+    let mx = cmd.moveX;
+    let my = cmd.moveY;
+    const len = Math.hypot(mx, my);
+    if (len > 1) {
+      mx /= len;
+      my /= len;
+    }
+    b.moveX = mx;
+    b.moveY = my;
+    if (Math.hypot(cmd.aimX, cmd.aimY) > 0.001) b.facing = Math.atan2(cmd.aimY, cmd.aimX);
+    else if (len > 0.1) b.facing = Math.atan2(my, mx);
+    if (!cmd.skipMove) this.moveBody(b, mx, my, dt);
+
+    if (b.id === ph.seekerId) {
+      if (cmd.fire) this.fire(b);
+      return;
+    }
+    if (cmd.prop && ph.blocks === 'pick' && ph.phase === 'hide' && cmd.prop !== b.prop && PROP_KINDS.includes(cmd.prop)) {
+      this.disguise(b, cmd.prop);
+    } else if (cmd.fire && this.time - b.lastRerollAt >= PROP_HUNT.rerollCooldown) {
+      // A hider's finger gun doesn't shoot: it turns them into a different block (and gives away a bush).
+      b.lastRerollAt = this.time;
+      b.lastShotAt = this.time;
+      this.disguise(b, this.randomProp(b.prop));
+    }
+  }
+
+  private disguise(b: Brawler, prop: PropKind) {
+    b.prop = prop;
+    this.events.push({ type: 'disguise', brawlerId: b.id, prop, x: b.x, y: b.y });
+  }
+
+  /** The seeker shot or touched a hider: they're out for the round. */
+  private findHider(h: Brawler, by: Brawler) {
+    const ph = this.propHunt!;
+    if (ph.phase !== 'seek' || !h.alive || h.id === ph.seekerId || by.id !== ph.seekerId) return;
+    h.alive = false;
+    ph.found.push(h.id);
+    if (ph.nextSeekerId === null) ph.nextSeekerId = h.id;
+    by.kills++;
+    this.events.push({ type: 'found', brawlerId: h.id, byId: by.id, x: h.x, y: h.y });
+  }
+
+  private endRound(winners: number[]) {
+    const ph = this.propHunt!;
+    ph.phase = 'over';
+    ph.phaseEndsAt = this.time + PROP_HUNT.roundBreak;
+    ph.roundWinners = winners;
+    for (const id of winners) {
+      ph.wins[id] = (ph.wins[id] ?? 0) + 1;
+      const b = this.brawlers.find((o) => o.id === id);
+      if (b) b.roundWins++;
+    }
+    this.bullets = [];
+    this.events.push({ type: 'roundOver', winners, nextSeekerId: ph.nextSeekerId });
+  }
+
+  /** Most rounds won takes it; time spent hidden breaks ties. */
+  private finishPropHunt() {
+    const order = [...this.brawlers].sort((a, b) => b.roundWins - a.roundWins || b.hiddenTime - a.hiddenTime);
+    order.forEach((b, i) => (b.rank = i + 1));
+    this.winnerId = order[0].id;
+    this.winnerTeam = order[0].team;
   }
 }

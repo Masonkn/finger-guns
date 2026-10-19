@@ -192,3 +192,46 @@ export const BURN = { duration: 3, damagePerSecond: 230 };
 
 /** Ice bullets: a hit slows the target's walking (not dashes). */
 export const CHILL = { duration: 1.6, speedMultiplier: 0.5 };
+
+// --- Prop hunt ---------------------------------------------------------------
+
+/** Showdown is the battle royale; prop hunt is hide and seek where the hiders are disguised as blocks. */
+export type GameMode = 'showdown' | 'propHunt';
+export const GAME_MODES: GameMode[] = ['showdown', 'propHunt'];
+export const GAME_MODE_NAMES: Record<GameMode, string> = { showdown: 'Showdown', propHunt: 'Prop hunt' };
+
+export function isGameMode(v: unknown): v is GameMode {
+  return v === 'showdown' || v === 'propHunt';
+}
+
+/** Whether hiders pick their block while hiding, or get a random one and have to make it work. */
+export type BlockChoice = 'pick' | 'random';
+export const BLOCK_CHOICE_NAMES: Record<BlockChoice, string> = { pick: 'Pick', random: 'Random' };
+
+export function isBlockChoice(v: unknown): v is BlockChoice {
+  return v === 'pick' || v === 'random';
+}
+
+/** What a hider can look like: things that are already lying around the arena. */
+export type PropKind = 'brick' | 'crate' | 'bush' | 'cube' | 'ammo';
+/** Wire order: snapshots send a block as its index here, so only ever add to the end. */
+export const PROP_KINDS: PropKind[] = ['brick', 'crate', 'bush', 'cube', 'ammo'];
+export const PROP_NAMES: Record<PropKind, string> = { brick: 'Brick', crate: 'Crate', bush: 'Bush', cube: 'Power cube', ammo: 'Ammo box' };
+export const PROP_ICONS: Record<PropKind, string> = { brick: '🧱', crate: '📦', bush: '🌿', cube: '🟩', ammo: '🎁' };
+
+export function isPropKind(v: unknown): v is PropKind {
+  return typeof v === 'string' && (PROP_KINDS as string[]).includes(v);
+}
+
+export const PROP_HUNT = {
+  rounds: 3,
+  hideTime: 60, // seconds the seeker sleeps in the middle while everyone hides
+  seekTime: 180, // seconds the seeker has to find everyone once the sleep mask comes off
+  roundBreak: 7, // seconds between rounds to show who won
+  tagDistance: 0.95, // the seeker finds a hider by touching them (centre to centre)
+  rerollCooldown: 1, // seconds between "shoot to become a different block"
+  decoyCubes: 16, // power cubes and ammo boxes lying around that do nothing, for cube and box hiders
+  decoyAmmo: 12,
+  flashlightRange: 8, // how far the seeker's flashlight reaches (bots notice hiders in it)
+  flashlightAngle: 0.55, // radians either side of where the seeker faces
+};

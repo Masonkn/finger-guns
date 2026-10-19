@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { ClientMessage, ROOM_CODE_LENGTH, TICK, cleanLook, cleanName } from '../src/net/protocol';
-import { DEFAULT_BOT_DIFFICULTY, TeamSize, isBotDifficulty, isTeamSize } from '../src/sim/config';
+import { DEFAULT_BOT_DIFFICULTY, PROP_KINDS, TeamSize, isBlockChoice, isBotDifficulty, isGameMode, isTeamSize } from '../src/sim/config';
 import { Client, Room, send } from './room';
 import { isMapChoice } from '../src/sim/themes';
 
@@ -120,6 +120,12 @@ function handle(client: Client, msg: ClientMessage) {
     case 'map':
       if (isMapChoice(msg.map)) client.room?.setMap(client, msg.map);
       break;
+    case 'game':
+      if (isGameMode(msg.game)) client.room?.setGame(client, msg.game);
+      break;
+    case 'blocks':
+      if (isBlockChoice(msg.blocks)) client.room?.setBlocks(client, msg.blocks);
+      break;
     case 'team':
       client.room?.setTeam(client, Number(msg.team));
       break;
@@ -134,6 +140,7 @@ function handle(client: Client, msg: ClientMessage) {
         f: msg.f ? 1 : 0,
         s: msg.s ? 1 : 0,
         q: msg.q ? 1 : 0,
+        ...(Number.isInteger(msg.p) && msg.p! >= 0 && msg.p! < PROP_KINDS.length && { p: msg.p }),
       });
       break;
     case 'leave':
@@ -155,7 +162,12 @@ function findRoom(client: Client, msg: Extract<ClientMessage, { t: 'join' }>): R
   const teamSize: TeamSize = isTeamSize(msg.teamSize) ? msg.teamSize : 1;
   // A new room starts on its first player's bot difficulty; they can change it in the lobby.
   const level = isBotDifficulty(msg.difficulty) ? msg.difficulty : DEFAULT_BOT_DIFFICULTY;
-  if (msg.mode === 'create') return createRoom(newCode(), teamSize, level);
+  if (msg.mode === 'create') {
+    const room = createRoom(newCode(), teamSize, level);
+    if (isGameMode(msg.game)) room.game = msg.game;
+    if (isBlockChoice(msg.blocks)) room.blocks = msg.blocks;
+    return room;
+  }
   // Everyone pressing Play online joins the same open lobby, whatever mode or bot level they
   // last used, so friends always find each other. The lobby's first player sets both.
   const open = [...rooms.values()].find((r) => !r.isPrivate && r.state === 'lobby' && !r.isFull);

@@ -1,8 +1,8 @@
 // Messages between the browser and the game server, sent as JSON over a WebSocket.
 // Shared by both sides so they can't drift apart.
 
-import type { BotDifficulty, TeamSize } from '../sim/config';
-import type { GameEvent } from '../sim/world';
+import type { BlockChoice, BotDifficulty, GameMode, TeamSize } from '../sim/config';
+import type { GameEvent, PropHuntState } from '../sim/world';
 import type { MapChoice, MapTheme } from '../sim/themes';
 
 export const TICK_RATE = 30; // server simulation and snapshot rate, per second
@@ -22,15 +22,26 @@ export interface WireLook {
 
 export type ClientMessage =
   | { t: 'join'; name: string; look?: WireLook; mode: 'quick'; teamSize?: TeamSize; difficulty?: BotDifficulty } // matchmaking into a public match
-  | { t: 'join'; name: string; look?: WireLook; mode: 'create'; teamSize?: TeamSize; difficulty?: BotDifficulty } // new private match with a code
+  | {
+      t: 'join';
+      name: string;
+      look?: WireLook;
+      mode: 'create';
+      teamSize?: TeamSize;
+      difficulty?: BotDifficulty;
+      game?: GameMode;
+      blocks?: BlockChoice;
+    } // new private match with a code
   | { t: 'join'; name: string; look?: WireLook; mode: 'code'; code: string } // join a friend's private match
   | { t: 'start' } // host starts a private match
   | { t: 'mode'; teamSize: TeamSize } // longest-waiting player picks solo or a team size
   | { t: 'difficulty'; level: BotDifficulty } // the longest-waiting player picks how well the bots play
   | { t: 'team'; team: number } // move to another team in the lobby
   | { t: 'map'; map: MapChoice } // private host picks a map, or today's featured one
-  // q: use the current kill-streak ability
-  | { t: 'input'; seq: number; mx: number; my: number; ax: number; ay: number; f: 0 | 1; s: 0 | 1; q?: 0 | 1 }
+  | { t: 'game'; game: GameMode } // private host picks showdown or prop hunt
+  | { t: 'blocks'; blocks: BlockChoice } // private host: prop hunt hiders pick their block, or get a random one
+  // q: use the current kill-streak ability; p: prop hunt block picked, as an index into PROP_KINDS
+  | { t: 'input'; seq: number; mx: number; my: number; ax: number; ay: number; f: 0 | 1; s: 0 | 1; q?: 0 | 1; p?: number }
   | { t: 'leave' };
 
 // --- Server -> client --------------------------------------------------------
@@ -58,6 +69,7 @@ export interface BrawlerState {
   fg: number[]; // extra fingers, by the id of the brawler each came from
   fx: number; // active effects: 1 shield, 2 rapid fire, 4 dash, 8 burning, 16 chilled
   ak?: number; // bullet type as an index into AMMO_KINDS, left out for normal
+  pk?: number; // prop hunt: the block a hider looks like, as an index into PROP_KINDS
   // Own brawler only:
   ammo?: number;
   sup?: number;
@@ -94,6 +106,7 @@ export interface Snapshot {
   cubes: [id: number, x: number, y: number][];
   fingers: [id: number, x: number, y: number, fromId: number][];
   ammo: [id: number, x: number, y: number, kind: number][]; // ammo boxes on the ground
+  ph?: PropHuntState; // prop hunt rounds, phase and seeker
   ev: GameEvent[];
 }
 
@@ -111,6 +124,9 @@ export type ServerMessage =
       canSetDifficulty: boolean; // you have been in the lobby longest
       canSetMode: boolean; // same: the longest-waiting player picks solo or a team size
       canSetMap: boolean; // private host only; public matches always play the featured map
+      game?: GameMode; // left out by older servers: showdown
+      blocks?: BlockChoice;
+      canSetGame?: boolean; // private host only; public matches are always showdown
     }
   | {
       t: 'start';
@@ -118,10 +134,12 @@ export type ServerMessage =
       you: number;
       teamSize: TeamSize;
       map?: MapTheme; // left out by older servers: summer
+      game?: GameMode; // left out: showdown
+      blocks?: BlockChoice;
       players: { id: number; name: string; team: number; look: WireLook | null }[];
     }
   | Snapshot
-  | { t: 'result'; rank: number; kills: number; cubes: number; winner: string | null }
+  | { t: 'result'; rank: number; kills: number; cubes: number; winner: string | null; wins?: number }
   | { t: 'error'; message: string };
 
 export function round(n: number, places = 2): number {

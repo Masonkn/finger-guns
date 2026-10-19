@@ -1,4 +1,4 @@
-import { BOT_SKILL, BRAWLER, BotDifficulty, DEFAULT_BOT_DIFFICULTY, FINGERS, MAP_SIZE } from './config';
+import { BOT_SKILL, BRAWLER, BotDifficulty, DEFAULT_BOT_DIFFICULTY, FINGERS, MAP_SIZE, PROP_HUNT, PropKind } from './config';
 import { Tile } from './map';
 import { ammoOf, fingerCount } from './world';
 import type { Brawler, Command, World } from './world';
@@ -13,7 +13,14 @@ interface BotMemory {
   aimError: number;
   engageDistance: number;
   lastSeen: { x: number; y: number; at: number } | null;
+  // Prop hunt
+  round: number; // the round the plan below was made for
+  hideSpot: { x: number; y: number } | null;
+  sweep: number; // seeker: which way the flashlight is swinging
 }
+
+/** How keen a seeker bot's eyes are at each difficulty: chance per look of spotting a still hider in the light. */
+const NOTICE_CHANCE = [0.04, 0.08, 0.14, 0.22];
 
 // Early on bots mostly loot, like players do in Showdown.
 const LOOT_PHASE = 25;
@@ -26,11 +33,14 @@ export class BotBrain {
   private memory = new Map<number, BotMemory>();
   private skill: (typeof BOT_SKILL)[BotDifficulty];
 
+  private noticeChance: number;
+
   constructor(
     private world: World,
     difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY,
   ) {
     this.skill = BOT_SKILL[difficulty];
+    this.noticeChance = NOTICE_CHANCE[difficulty];
   }
 
   command(bot: Brawler, dt: number): Command {
@@ -47,12 +57,16 @@ export class BotBrain {
         aimError: between(skill.aimError),
         engageDistance: between(skill.engageDistance),
         lastSeen: null,
+        round: 0,
+        hideSpot: null,
+        sweep: Math.random() < 0.5 ? 1 : -1,
       };
       this.memory.set(bot.id, m);
     }
 
     m.thinkIn -= dt;
     m.fireDelay -= dt;
+    if (this.world.propHunt) return this.propHunt(bot, m);
     if (m.thinkIn <= 0) {
       m.thinkIn = skill.thinkInterval;
       this.think(bot, m);
@@ -181,6 +195,164 @@ export class BotBrain {
         this.setGoal(bot, m, center + (Math.random() * 2 - 1) * h, center + (Math.random() * 2 - 1) * h);
       }
     }
+  }
+
+  // --- Prop hunt -------------------------------------------------------------
+
+  private propHunt(bot: Brawler, m: BotMemory): Command {
+    const w = this.world;
+    const ph = w.propHunt!;
+    const cmd: Command = { moveX: 0, moveY: 0, aimX: 0, aimY: 0, fire: false, superFire: false };
+    if (m.round !== ph.round) {
+      // New round: forget the old plan.
+      m.round = ph.round;
+      m.hideSpot = null;
+      m.goal = null;
+      m.path = [];
+      m.targetId = null;
+      if (bot.id !== ph.seekerId) this.planHide(bot, m, cmd);
+    }
+    if (!w.canMove(bot)) return cmd;
+    if (bot.id === ph.seekerId) this.seek(bot, m, cmd);
+    else this.hide(bot, m, cmd);
+    return cmd;
+  }
+
+  /** Picks a block and a spot where it blends in: a bush in the grass, a brick in line with a wall, and so on. */
+  private planHide(bot: Brawler, m: BotMemory, cmd: Command) {
+    const w = this.world;
+    let kind = bot.prop ?? 'bush';
+    if (w.propHunt!.blocks === 'pick') {
+      const r = Math.random();
+      kind = r < 0.4 ? 'bush' : r < 0.65 ? 'brick' : r < 0.82 ? 'crate' : r < 0.92 ? 'cube' : 'ammo';
+      cmd.prop = kind;
+    }
+    const spots = this.hidingSpots(kind);
+    // Somewhere reachable in the hiding time, not too close to the sleeping seeker.
+    const c = MAP_SIZE / 2;
+    const options = spots.filter((s) => {
+      const d = Math.hypot(s.x - bot.x, s.y - bot.y);
+      return d < BRAWLER.speed * PROP_HUNT.hideTime * 0.35 && Math.hypot(s.x - c, s.y - c) > 6;
+    });
+    const pick = options.length ? options : spots;
+    m.hideSpot = pick.length ? pick[Math.floor(Math.random() * pick.length)] : { x: bot.x, y: bot.y };
+    this.setGoal(bot, m, m.hideSpot.x, m.hideSpot.y);
+  }
+
+  /** Tile centres where a block of this kind would look like it belongs. */
+  private hidingSpots(kind: PropKind): { x: number; y: number }[] {
+    const w = this.world;
+    const map = w.map;
+    const out: { x: number; y: number }[] = [];
+    const nextTo = (x: number, y: number, test: (tx: number, ty: number) => boolean) =>
+      test(x + 1, y) || test(x - 1, y) || test(x, y + 1) || test(x, y - 1);
+    const isWall = (tx: number, ty: number) => tx >= 0 && ty >= 0 && tx < map.size && ty < map.size && map.tiles[ty * map.size + tx] === Tile.Wall;
+    const isCrate = (tx: number, ty: number) => !!w.crateAt(tx, ty)?.alive;
+    if (kind === 'cube' || kind === 'ammo') {
+      // Next to one of the decoys of the same kind.
+      const decoys = kind === 'cube' ? w.cubes : w.ammoPickups;
+      for (const d of decoys) {
+        for (const [ox, oy] of [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
+          if (!w.isSolid(Math.floor(d.x + ox), Math.floor(d.y + oy))) out.push({ x: d.x + ox, y: d.y + oy });
+        }
+      }
+      return out;
+    }
+    for (let y = 1; y < map.size - 1; y++) {
+      for (let x = 1; x < map.size - 1; x++) {
+        if (w.isSolid(x, y)) continue;
+        const tile = map.tiles[y * map.size + x];
+        const fits =
+          kind === 'bush' ? tile === Tile.Bush : kind === 'brick' ? nextTo(x, y, isWall) : nextTo(x, y, isCrate);
+        if (fits) out.push({ x: x + 0.5, y: y + 0.5 });
+      }
+    }
+    return out;
+  }
+
+  private hide(bot: Brawler, m: BotMemory, cmd: Command) {
+    const w = this.world;
+    const seeker = w.brawlers.find((b) => b.id === w.propHunt!.seekerId)!;
+    const d = Math.hypot(seeker.x - bot.x, seeker.y - bot.y);
+    // Run for it when the seeker is right on top of you and clearly coming (and sometimes panic).
+    if (m.thinkIn <= 0) {
+      m.thinkIn = this.skill.thinkInterval;
+      const coming = d < 2.6 && w.canSee(seeker, bot) && w.hasLineOfSight(seeker.x, seeker.y, bot.x, bot.y);
+      if (coming && m.path.length === 0 && Math.random() < 0.35) {
+        const ax = bot.x + ((bot.x - seeker.x) / (d || 1)) * 6;
+        const ay = bot.y + ((bot.y - seeker.y) / (d || 1)) * 6;
+        this.setGoal(bot, m, ax, ay);
+        m.hideSpot = m.goal;
+      }
+    }
+    this.followPath(bot, m, cmd);
+  }
+
+  private seek(bot: Brawler, m: BotMemory, cmd: Command) {
+    const w = this.world;
+    const ph = w.propHunt!;
+    if (m.thinkIn <= 0) {
+      m.thinkIn = this.skill.thinkInterval;
+      const target = m.targetId !== null ? w.brawlers.find((b) => b.id === m.targetId) : undefined;
+      if (!target || !target.alive || !w.canSee(bot, target)) m.targetId = this.spotHider(bot)?.id ?? null;
+      const chase = m.targetId !== null ? w.brawlers.find((b) => b.id === m.targetId)! : null;
+      if (chase) {
+        this.setGoal(bot, m, chase.x, chase.y);
+      } else if (!m.goal || m.path.length === 0 || Math.hypot(m.goal.x - bot.x, m.goal.y - bot.y) < 1.2) {
+        // Search: walk to a random hiding place (bushes are the obvious first look).
+        const kinds: PropKind[] = ['bush', 'brick', 'crate', 'cube'];
+        const spots = this.hidingSpots(kinds[Math.floor(Math.random() * kinds.length)]);
+        const s = spots[Math.floor(Math.random() * spots.length)];
+        if (s) this.setGoal(bot, m, s.x, s.y);
+      }
+    }
+    this.followPath(bot, m, cmd);
+    const target = m.targetId !== null ? w.brawlers.find((b) => b.id === m.targetId) : undefined;
+    if (target && target.alive && ph.phase === 'seek') {
+      const dx = target.x - bot.x;
+      const dy = target.y - bot.y;
+      const d = Math.hypot(dx, dy);
+      const a = Math.atan2(dy, dx) + (Math.random() * 2 - 1) * m.aimError * 0.5;
+      cmd.aimX = Math.cos(a);
+      cmd.aimY = Math.sin(a);
+      if (d < 1.5 || !w.hasLineOfSight(bot.x, bot.y, target.x, target.y)) {
+        // Close enough to just touch them.
+        cmd.moveX = dx / (d || 1);
+        cmd.moveY = dy / (d || 1);
+      } else if (d < ammoOf(bot).range * 0.9 && m.fireDelay <= 0 && bot.ammo >= 1) {
+        cmd.fire = true;
+        m.fireDelay = (0.5 + Math.random() * 0.5) * this.skill.fireDelay;
+      }
+    } else if (Math.hypot(cmd.moveX, cmd.moveY) > 0.1) {
+      // Swing the flashlight from side to side while walking.
+      m.strafe += m.sweep * 0.03;
+      if (Math.abs(m.strafe) > 0.7) m.sweep *= -1;
+      const a = Math.atan2(cmd.moveY, cmd.moveX) + m.strafe;
+      cmd.aimX = Math.cos(a);
+      cmd.aimY = Math.sin(a);
+    }
+  }
+
+  /** Looks around with the flashlight: hiders in its beam may get noticed, moving ones far more easily. */
+  private spotHider(bot: Brawler): Brawler | null {
+    const w = this.world;
+    for (const h of w.brawlers) {
+      if (!h.alive || h.id === bot.id || !w.canSee(bot, h)) continue;
+      const dx = h.x - bot.x;
+      const dy = h.y - bot.y;
+      const d = Math.hypot(dx, dy);
+      if (d > PROP_HUNT.flashlightRange) continue;
+      const off = Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - bot.facing), Math.cos(Math.atan2(dy, dx) - bot.facing)));
+      if (d > 2 && off > PROP_HUNT.flashlightAngle) continue;
+      if (!w.hasLineOfSight(bot.x, bot.y, h.x, h.y)) continue;
+      let chance = this.noticeChance;
+      if (Math.hypot(h.moveX, h.moveY) > 0.1) chance *= 4; // moving blocks stand out
+      // A block that isn't lined up with the tiles looks out of place.
+      if (Math.abs((h.x % 1) - 0.5) > 0.2 || Math.abs((h.y % 1) - 0.5) > 0.2) chance *= 2;
+      if (d < 3) chance *= 2;
+      if (Math.random() < chance) return h;
+    }
+    return null;
   }
 
   private pickTarget(bot: Brawler, maxDistance: number): Brawler | null {

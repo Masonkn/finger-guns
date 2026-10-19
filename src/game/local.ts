@@ -1,6 +1,6 @@
 import type { PlayerIntent } from '../input';
 import { type PlayerLook, randomLook } from '../render/cosmetics';
-import { BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize } from '../sim/config';
+import { BlockChoice, BotDifficulty, DEFAULT_BOT_DIFFICULTY, GameMode, PLAYER_COUNT, TeamSize } from '../sim/config';
 import { BotBrain } from '../sim/bot';
 import { Brawler, Command, World, winnerLabel } from '../sim/world';
 import type { MapTheme } from '../sim/themes';
@@ -23,14 +23,20 @@ export class LocalMatch implements Match {
     teamSize: TeamSize = 1,
     difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY,
     readonly mapTheme: MapTheme = 'summer',
+    game: GameMode = 'showdown',
+    blocks: BlockChoice = 'pick',
   ) {
     const bots = shuffle(BOT_NAMES).slice(0, PLAYER_COUNT - 1);
     // You are seat 0, so your team is team 0 and bots make up the rest of it.
+    // Prop hunt is everyone for themselves.
+    if (game === 'propHunt') teamSize = 1;
     const names = [name, ...bots];
     this.world = new World(
       Math.floor(Math.random() * 1e9),
       names.map((n, i) => ({ name: n, isBot: i > 0, team: Math.floor(i / teamSize) })),
       teamSize,
+      game,
+      blocks,
     );
     this.playerId = this.world.brawlers[0].id;
     this.bots = new BotBrain(this.world, difficulty);
@@ -66,6 +72,7 @@ export class LocalMatch implements Match {
         fire: intent.fire && firstStep,
         superFire: intent.superFire && firstStep,
         ability: intent.ability && firstStep ? 'auto' : null,
+        prop: firstStep ? intent.prop : null,
       });
       firstStep = false;
       world.step(STEP, commands);
@@ -75,7 +82,8 @@ export class LocalMatch implements Match {
   get result(): MatchResult | null {
     const me = this.world.brawlers[0];
     if (me.rank === 0) return null; // your team is still in it
-    return { rank: me.rank, kills: me.kills, cubes: me.cubes, winner: winnerLabel(this.world) };
+    const wins = this.world.propHunt ? me.roundWins : undefined;
+    return { rank: me.rank, kills: me.kills, cubes: me.cubes, winner: winnerLabel(this.world), wins };
   }
 
   dispose() {}
