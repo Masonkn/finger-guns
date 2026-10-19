@@ -3,6 +3,7 @@ import { type PlayerLook, randomLook } from '../render/cosmetics';
 import { BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize } from '../sim/config';
 import { BotBrain } from '../sim/bot';
 import { Brawler, Command, World, winnerLabel } from '../sim/world';
+import type { MapTheme } from '../sim/themes';
 import type { Match, MatchResult } from './match';
 
 const STEP = 1 / 60;
@@ -16,7 +17,13 @@ export class LocalMatch implements Match {
   private acc = 0;
   private looks = new Map<number, PlayerLook>();
 
-  constructor(name: string, look: PlayerLook, teamSize: TeamSize = 1, difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY) {
+  constructor(
+    name: string,
+    look: PlayerLook,
+    teamSize: TeamSize = 1,
+    difficulty: BotDifficulty = DEFAULT_BOT_DIFFICULTY,
+    readonly mapTheme: MapTheme = 'summer',
+  ) {
     const bots = shuffle(BOT_NAMES).slice(0, PLAYER_COUNT - 1);
     // You are seat 0, so your team is team 0 and bots make up the rest of it.
     const names = [name, ...bots];

@@ -23,6 +23,7 @@
       <div class="card">
         <h1 class="logo"><span>FINGER</span><span>GUNS</span></h1>
         <p class="tagline">Showdown: last hand (or team) standing wins</p>
+        <p class="featured-map" id="featured-map"></p>
         <label class="field">
           <span>Your name</span>
           <input id="name" maxlength="14" autocomplete="nickname" spellcheck="false" />
@@ -63,6 +64,15 @@
           <span class="lobby-difficulty-label" id="difficulty-label">Bots</span>
           <div class="difficulty-steps" id="difficulty-steps" role="group" aria-labelledby="difficulty-label"></div>
           <div class="difficulty-note" id="difficulty-note"></div>
+        </div>
+        <div class="lobby-difficulty" id="lobby-map">
+          <span class="lobby-difficulty-label">Map</span>
+          <div class="map-picker">
+            <button class="map-step" id="map-prev" aria-label="Previous map">‹</button>
+            <div class="map-name" id="map-name"></div>
+            <button class="map-step" id="map-next" aria-label="Next map">›</button>
+          </div>
+          <div class="difficulty-note" id="map-note"></div>
         </div>
         <div class="lobby-status" id="lobby-status"></div>
         <div class="lobby-teams" id="lobby-teams"></div>

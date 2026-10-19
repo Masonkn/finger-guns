@@ -53,12 +53,19 @@ const together = await a.wait<Extract<ServerMessage, { t: 'lobby' }>>(
 );
 console.log('B moved to team 3 and back to team 0:', together.players.map((p) => p.team).join(','));
 if (a.inbox.some((m) => m.t === 'start')) throw new Error('non-host was able to start');
+// Only the private host picks the map; the guest's pick is ignored.
+b.send({ t: 'map', map: 'christmas' });
+a.send({ t: 'map', map: 'halloween' });
+const spooky = await b.wait<Extract<ServerMessage, { t: 'lobby' }>>((m) => m.t === 'lobby' && m.map === 'halloween');
+console.log('host picked Halloween; guest pick ignored:', !b.inbox.some((m) => m.t === 'lobby' && m.map === 'christmas'), 'featured today', spooky.featured);
 a.send({ t: 'start' });
 const startA = await a.wait<Extract<ServerMessage, { t: 'start' }>>((m) => m.t === 'start');
 const startB = await b.wait<Extract<ServerMessage, { t: 'start' }>>((m) => m.t === 'start');
 console.log('started, seed', startA.seed, 'A is', startA.you, 'B is', startB.you, 'players', startA.players.length, 'team size', startA.teamSize);
 const teamOf = (id: number) => startA.players.find((p) => p.id === id)!.team;
 console.log('A and B on the same team:', teamOf(startA.you) === teamOf(startB.you));
+console.log('both play the same map:', startA.map, startB.map);
+if (startA.map !== 'halloween' || startB.map !== 'halloween') throw new Error('map not sent to both players');
 const teamSizes = new Map<number, number>();
 for (const p of startA.players) teamSizes.set(p.team, (teamSizes.get(p.team) ?? 0) + 1);
 console.log('teams:', [...teamSizes.values()].join(','));

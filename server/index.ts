@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { ClientMessage, ROOM_CODE_LENGTH, TICK, cleanLook, cleanName } from '../src/net/protocol';
 import { DEFAULT_BOT_DIFFICULTY, TeamSize, isBotDifficulty, isTeamSize } from '../src/sim/config';
 import { Client, Room, send } from './room';
+import { isMapChoice } from '../src/sim/themes';
 
 // One process serves the built game (dist/) and runs every match over WebSockets at /ws.
 
@@ -115,6 +116,9 @@ function handle(client: Client, msg: ClientMessage) {
       break;
     case 'difficulty':
       if (isBotDifficulty(msg.level)) client.room?.setDifficulty(client, msg.level);
+      break;
+    case 'map':
+      if (isMapChoice(msg.map)) client.room?.setMap(client, msg.map);
       break;
     case 'team':
       client.room?.setTeam(client, Number(msg.team));
