@@ -149,9 +149,10 @@ export type GameEvent =
   | { type: 'crateBreak'; crateId: number; x: number; y: number }
   | { type: 'wallHit'; x: number; y: number }
   | { type: 'death'; brawlerId: number; killerId: number | null; x: number; y: number }
-  | { type: 'pickup'; brawlerId: number; cubeId: number }
+  // sharedBy: in team modes every pickup is copied to living teammates; this names who picked it up
+  | { type: 'pickup'; brawlerId: number; cubeId: number; sharedBy?: number }
   | { type: 'fingerDrop'; fingerId: number; fromId: number; x: number; y: number }
-  | { type: 'fingerPickup'; brawlerId: number; fingerId: number; fromId: number; fingers: number }
+  | { type: 'fingerPickup'; brawlerId: number; fingerId: number; fromId: number; fingers: number; sharedBy?: number }
   | { type: 'ammoPickup'; brawlerId: number; pickupId: number; kind: AmmoKind }
   | { type: 'ability'; brawlerId: number; ability: AbilityKind }
   | { type: 'abilityUnlock'; brawlerId: number; ability: AbilityKind };
@@ -822,12 +823,21 @@ export class World {
         if (!b.alive || fingerCount(b) >= FINGERS.max) continue;
         if (Math.hypot(b.x - f.x, b.y - f.y) > FINGERS.pickupRadius) continue;
         f.alive = false;
-        b.extraFingers.push(f.fromId);
-        this.events.push({ type: 'fingerPickup', brawlerId: b.id, fingerId: f.id, fromId: f.fromId, fingers: fingerCount(b) });
+        // Teammates share: everyone standing on the team gets a finger too, up to the max.
+        for (const o of [b, ...this.teammatesOf(b)]) {
+          if (fingerCount(o) >= FINGERS.max) continue;
+          o.extraFingers.push(f.fromId);
+          const sharedBy = o === b ? undefined : b.id;
+          this.events.push({ type: 'fingerPickup', brawlerId: o.id, fingerId: f.id, fromId: f.fromId, fingers: fingerCount(o), sharedBy });
+        }
         break;
       }
     }
     this.fingers = this.fingers.filter((f) => f.alive);
+  }
+
+  private teammatesOf(b: Brawler): Brawler[] {
+    return this.brawlers.filter((o) => o.alive && o.team === b.team && o !== b);
   }
 
   private updateCubes() {
@@ -837,10 +847,13 @@ export class World {
         if (!b.alive) continue;
         if (Math.hypot(b.x - cube.x, b.y - cube.y) > POWER_CUBE.pickupRadius) continue;
         cube.alive = false;
-        b.cubes++;
-        b.maxHp += POWER_CUBE.hpBonus;
-        b.hp += POWER_CUBE.hpBonus;
-        this.events.push({ type: 'pickup', brawlerId: b.id, cubeId: cube.id });
+        // Teammates share: everyone standing on the team gets the power cube too.
+        for (const o of [b, ...this.teammatesOf(b)]) {
+          o.cubes++;
+          o.maxHp += POWER_CUBE.hpBonus;
+          o.hp += POWER_CUBE.hpBonus;
+          this.events.push({ type: 'pickup', brawlerId: o.id, cubeId: cube.id, sharedBy: o === b ? undefined : b.id });
+        }
         break;
       }
     }
