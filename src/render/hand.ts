@@ -55,6 +55,9 @@ export class HandModel {
   private gloveCuff: THREE.Mesh;
   private skinColor: number;
   private glove: GloveId = 'none';
+  private mask: THREE.Group | null = null;
+  private maskOn = false;
+  private maskLift = 1; // 0 over the eyes, 1 lifted all the way off
 
   constructor(sleeveColor: number, role: HandRole, skinColor: number, topper: TopperId = 'none', glove: GloveId = 'none') {
     // With a glove on, the "skin" material shows the glove colour instead.
@@ -209,6 +212,55 @@ export class HandModel {
     if (this.deathT < 0) this.deathT = 0;
   }
 
+  /** Back on its feet for a new prop hunt round. */
+  revive() {
+    if (this.deathT < 0) return;
+    this.deathT = -1;
+    this.body.rotation.x = 0;
+    this.body.position.y = BASE_Y;
+    this.ring.visible = true;
+  }
+
+  /** Hides the hand itself, for a prop hunt hider wearing a block disguise. */
+  setBodyVisible(visible: boolean) {
+    this.body.visible = visible;
+  }
+
+  /**
+   * The prop hunt seeker's sleep mask: a padded band over the knuckles with closed eyes
+   * drawn on. Taking it off lifts it up and away rather than snapping it out.
+   */
+  setSleepMask(on: boolean) {
+    if (on && !this.mask) this.mask = this.buildMask();
+    if (on) this.maskLift = 0;
+    this.maskOn = on;
+  }
+
+  private buildMask(): THREE.Group {
+    const g = new THREE.Group();
+    const cloth = toon(0x3b2d7a);
+    const trim = toon(0xff8fc4);
+    const ink = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    this.materials.push(cloth, trim, ink);
+    const band = addMesh(new RoundedBoxGeometry(0.3, 0.44, 0.34, 3, 0.08), cloth, 0.03);
+    g.add(band);
+    for (const z of [-0.18, 0.18]) {
+      const edge = new THREE.Mesh(new RoundedBoxGeometry(0.32, 0.46, 0.03, 2, 0.012), trim);
+      edge.position.z = z;
+      g.add(edge);
+    }
+    // Two sleepy closed eyes on top, like the eyes printed on a real sleep mask.
+    for (const z of [-0.075, 0.075]) {
+      const eye = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.012, 6, 14, Math.PI), ink);
+      eye.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
+      eye.position.set(0.0, 0.225, z);
+      g.add(eye);
+    }
+    g.position.set(0.05, 0.02, 0);
+    this.body.add(g);
+    return g;
+  }
+
   get dead() {
     return this.deathT >= 0;
   }
@@ -260,6 +312,15 @@ export class HandModel {
     const heat = this.rapid * (0.35 + 0.2 * Math.sin(this.bobPhase * 3));
     const glowAmount = Math.max(this.superFlash, heat);
     this.skinMat.emissive.setRGB(glowAmount * 0.9, glowAmount * (this.rapid ? 0.35 : 0.6), 0);
+
+    if (this.mask) {
+      if (!this.maskOn) this.maskLift = Math.min(1, this.maskLift + dt * 1.4);
+      const t = easeOut(this.maskLift);
+      this.mask.position.y = 0.02 + t * 0.9;
+      this.mask.rotation.z = t * 0.8;
+      this.mask.scale.setScalar(1 - t * 0.5);
+      this.mask.visible = this.maskLift < 1;
+    }
 
     this.shield.visible = this.shieldOn > 0;
     if (this.shield.visible) {

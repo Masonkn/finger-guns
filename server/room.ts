@@ -1,5 +1,16 @@
 import type { WebSocket } from 'ws';
-import { AMMO_KINDS, AmmoKind, BotDifficulty, DEFAULT_BOT_DIFFICULTY, PLAYER_COUNT, TeamSize, teamCount } from '../src/sim/config';
+import {
+  AMMO_KINDS,
+  AmmoKind,
+  BlockChoice,
+  BotDifficulty,
+  DEFAULT_BOT_DIFFICULTY,
+  GameMode,
+  PLAYER_COUNT,
+  PROP_KINDS,
+  TeamSize,
+  teamCount,
+} from '../src/sim/config';
 import { BotBrain } from '../src/sim/bot';
 import { Command, PlayerSlot, World, winnerLabel } from '../src/sim/world';
 import { MapChoice, featuredMap, resolveMap } from '../src/sim/themes';
@@ -53,6 +64,8 @@ export class Room {
   private endedClock = 0;
   private lastLobbyBroadcast = -1;
   map: MapChoice = 'featured';
+  game: GameMode = 'showdown'; // prop hunt only in private matches
+  blocks: BlockChoice = 'pick';
 
   constructor(
     readonly id: string,
@@ -139,6 +152,18 @@ export class Room {
     this.broadcastLobby();
   }
 
+  setGame(client: Client, game: GameMode) {
+    if (this.state !== 'lobby' || client !== this.host || game === this.game) return;
+    this.game = game;
+    this.broadcastLobby();
+  }
+
+  setBlocks(client: Client, blocks: BlockChoice) {
+    if (this.state !== 'lobby' || client !== this.host || blocks === this.blocks) return;
+    this.blocks = blocks;
+    this.broadcastLobby();
+  }
+
   setTeam(client: Client, team: number) {
     if (this.state !== 'lobby' || !this.clients.includes(client)) return;
     if (!Number.isInteger(team) || team < 0 || team >= teamCount(this.teamSize)) return;
@@ -165,6 +190,7 @@ export class Room {
       const dropped = client.inputs.shift()!;
       if (dropped.s) client.inputs[0].s = 1;
       if (dropped.q) client.inputs[0].q = 1;
+      if (dropped.p !== undefined && client.inputs[0].p === undefined) client.inputs[0].p = dropped.p;
       client.ackSeq = Math.max(client.ackSeq, dropped.seq);
     }
   }
@@ -207,13 +233,19 @@ export class Room {
         canSetDifficulty: c === this.leader,
         canSetMode: c === this.leader,
         canSetMap: c === host,
+        game: this.game,
+        blocks: this.blocks,
+        canSetGame: c === host,
       });
     }
   }
 
   private startMatch() {
     if (this.state !== 'lobby') return;
-    const size = this.teamSize;
+    const propHunt = this.game === 'propHunt';
+    // Prop hunt is everyone for themselves: one seeker against the rest.
+    const size: TeamSize = propHunt ? 1 : this.teamSize;
+    if (propHunt) this.clients.forEach((c, i) => (c.team = i));
     // Seat everyone team by team (the world spawns teammates together), bots in the empty seats.
     // Teams are shuffled so the same lobby team doesn't always start in the same spot.
     const botNames = shuffle(BOT_NAMES);
@@ -233,6 +265,8 @@ export class Room {
       seed,
       seats.map((o) => o.slot),
       size,
+      this.game,
+      this.blocks,
     );
     this.bots = new BotBrain(this.world, this.difficulty);
     seats.forEach((o, i) => {
@@ -247,7 +281,7 @@ export class Room {
     }));
     // Everyone in the match gets the same map; 'featured' goes by the server's date.
     const map = resolveMap(this.map);
-    for (const c of this.clients) send(c.ws, { t: 'start', seed, you: c.brawlerId!, teamSize: size, map, players });
+    for (const c of this.clients) send(c.ws, { t: 'start', seed, you: c.brawlerId!, teamSize: size, map, game: this.game, blocks: this.blocks, players });
   }
 
   private step() {
@@ -263,6 +297,7 @@ export class Room {
       let fire = false;
       let superFire = false;
       let ability = false;
+      let prop: number | undefined;
       let consumed = false;
       while (c.inputs.length > 0 && c.moveCredit >= 1) {
         const input = c.inputs.shift()!;
@@ -271,10 +306,11 @@ export class Room {
         c.last = input;
         consumed = true;
         // A dash carries the hand on its own, so walking input pauses until it ends.
-        if (me.alive && !world.isDashing(me)) world.moveBody(me, input.mx, input.my, TICK, world.speedScale(me));
+        if (me.alive && !world.isDashing(me) && world.canMove(me)) world.moveBody(me, input.mx, input.my, TICK, world.speedScale(me));
         fire ||= input.f === 1;
         superFire ||= input.s === 1;
         ability ||= input.q === 1;
+        if (input.p !== undefined) prop = input.p;
       }
       const use = c.last;
       if (!use) continue;
@@ -286,6 +322,7 @@ export class Room {
         fire,
         superFire,
         ability: ability ? 'auto' : null,
+        prop: prop !== undefined ? PROP_KINDS[prop] : null,
         skipMove: true,
       });
     }
@@ -305,7 +342,14 @@ export class Room {
       const me = world.brawlers.find((b) => b.id === c.brawlerId)!;
       if (me.rank === 0) continue; // your team is still in it
       c.resultSent = true;
-      send(c.ws, { t: 'result', rank: me.rank, kills: me.kills, cubes: me.cubes, winner: winnerLabel(world) });
+      send(c.ws, {
+        t: 'result',
+        rank: me.rank,
+        kills: me.kills,
+        cubes: me.cubes,
+        winner: winnerLabel(world),
+        ...(world.propHunt && { wins: me.roundWins }),
+      });
     }
     if (world.winnerId !== null) this.state = 'ended';
   }
@@ -343,6 +387,7 @@ export class Room {
           (world.isChilled(o) ? FX_CHILL : 0),
       };
       if (o.ammoKind !== 'normal') s.ak = kindIndex(o.ammoKind);
+      if (o.prop) s.pk = PROP_KINDS.indexOf(o.prop);
       if (o === me) {
         s.ammo = round(o.ammo, 3);
         s.sup = round(o.superCharge, 3);
@@ -372,6 +417,7 @@ export class Room {
       cubes: world.cubes.map((k) => [k.id, round(k.x), round(k.y)]),
       fingers: world.fingers.map((f) => [f.id, round(f.x), round(f.y), f.fromId]),
       ammo: world.ammoPickups.map((p) => [p.id, round(p.x), round(p.y), kindIndex(p.kind)]),
+      ...(world.propHunt && { ph: { ...world.propHunt, phaseEndsAt: round(world.propHunt.phaseEndsAt, 3) } }),
       ev: events,
     });
   }

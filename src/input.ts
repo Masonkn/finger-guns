@@ -1,4 +1,5 @@
 import type { GameScene } from './render/scene';
+import type { PropKind } from './sim/config';
 
 export interface PlayerIntent {
   moveX: number; // world space
@@ -11,6 +12,7 @@ export interface PlayerIntent {
   superFire: boolean;
   autoAim: boolean; // fire at the nearest target instead of aimX/aimY
   ability: boolean; // use the current kill-streak ability
+  prop?: PropKind | null; // prop hunt: the block a hider just picked
 }
 
 interface Stick {

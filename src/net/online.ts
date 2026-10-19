@@ -1,7 +1,7 @@
 import type { Match, MatchResult } from '../game/match';
 import type { PlayerIntent } from '../input';
 import { DEFAULT_LOOK, type PlayerLook, type TopperId, isGloveId, isTopperId, randomLook } from '../render/cosmetics';
-import { AMMO, AMMO_KINDS, AmmoKind, BRAWLER, RAPID_FIRE_SHOT_COOLDOWN, SUPER } from '../sim/config';
+import { AMMO, AMMO_KINDS, AmmoKind, BRAWLER, PROP_KINDS, PropKind, RAPID_FIRE_SHOT_COOLDOWN, SUPER } from '../sim/config';
 import { Brawler, Point, World, ammoOf } from '../sim/world';
 import { type MapTheme, isMapTheme } from '../sim/themes';
 import type { Connection } from './connection';
@@ -55,6 +55,7 @@ export class OnlineMatch implements Match {
   private wantFire = false;
   private wantSuper = false;
   private wantAbility = false;
+  private wantProp: PropKind | null = null;
   private looks = new Map<number, PlayerLook>();
   private predictedAmmo: number = BRAWLER.maxAmmo;
   private lastLocalShot = -10;
@@ -67,6 +68,8 @@ export class OnlineMatch implements Match {
       start.seed,
       start.players.map((p) => ({ name: p.name, isBot: false, team: p.team })),
       start.teamSize,
+      start.game ?? 'showdown',
+      start.blocks ?? 'pick',
     );
     // Both sides build the same arena from the seed, so ids line up; check anyway.
     start.players.forEach((p, i) => {
@@ -100,7 +103,7 @@ export class OnlineMatch implements Match {
 
   handle(msg: ServerMessage) {
     if (msg.t === 'snap') this.onSnapshot(msg);
-    else if (msg.t === 'result') this.result = { rank: msg.rank, kills: msg.kills, cubes: msg.cubes, winner: msg.winner };
+    else if (msg.t === 'result') this.result = { rank: msg.rank, kills: msg.kills, cubes: msg.cubes, winner: msg.winner, wins: msg.wins };
   }
 
   update(dt: number, intent: PlayerIntent) {
@@ -111,6 +114,7 @@ export class OnlineMatch implements Match {
     if (intent.fire) this.wantFire = true;
     if (intent.superFire) this.wantSuper = true;
     if (intent.ability) this.wantAbility = true;
+    if (intent.prop) this.wantProp = intent.prop;
 
     this.acc += dt;
     while (this.acc >= TICK) {
@@ -126,19 +130,34 @@ export class OnlineMatch implements Match {
         s: this.wantSuper ? 1 : 0,
         q: this.wantAbility ? 1 : 0,
       };
+      if (this.wantProp) input.p = PROP_KINDS.indexOf(this.wantProp);
       this.wantFire = false;
       this.wantSuper = false;
       this.wantAbility = false;
+      this.wantProp = null;
       this.conn.send(input);
       this.pending.push(input);
       this.prevPred = { ...this.pred };
       if (me.alive) {
         // While dashing the server moves the hand; reconcile picks up where it lands.
-        if (!this.world.isDashing(me)) this.world.moveBody(this.pred, input.mx, input.my, TICK, this.world.speedScale(me));
-        this.predictShot(input, now);
+        if (!this.world.isDashing(me) && this.world.canMove(me)) {
+          this.world.moveBody(this.pred, input.mx, input.my, TICK, this.world.speedScale(me));
+        }
+        // Prop hunt hiders don't shoot: their trigger swaps their block, which the server decides.
+        if (!this.world.propHunt || this.world.isSeeker(me)) this.predictShot(input, now);
       }
     }
 
+    if (me.alive && !this.world.canMove(me)) {
+      // Asleep under the sleep mask, or between prop hunt rounds: stay where the server put you.
+      me.x = this.pred.x;
+      me.y = this.pred.y;
+      this.prevPred = { ...this.pred };
+      me.moveX = me.moveY = 0;
+      this.interpolateOthers(now);
+      this.extrapolateBullets(now);
+      return;
+    }
     if (me.alive) {
       // Blend between the last two predicted ticks for smooth 60fps+ motion.
       const a = this.acc / TICK;
@@ -191,8 +210,13 @@ export class OnlineMatch implements Match {
     w.zoneHalfSize = snap.zone;
     const alive = new Set(snap.alive);
     for (const b of w.brawlers) b.alive = alive.has(b.id);
+    if (snap.ph) {
+      w.propHunt = snap.ph;
+      for (const b of w.brawlers) b.roundWins = snap.ph.wins[b.id] ?? 0;
+    }
     const standing = w.brawlers.filter((b) => b.alive);
-    if (standing.length > 0 && standing.every((b) => b.team === standing[0].team)) {
+    // Prop hunt says who won in the result message; a lone seeker between rounds hasn't won anything.
+    if (!w.propHunt && standing.length > 0 && standing.every((b) => b.team === standing[0].team)) {
       w.winnerId = standing[0].id;
       w.winnerTeam = standing[0].team;
     }
@@ -215,6 +239,7 @@ export class OnlineMatch implements Match {
       b.chillUntil = s.fx & FX_CHILL ? Infinity : 0;
       b.ammoKind = kindAt(s.ak);
       b.ammoUntil = s.au ?? (b.ammoKind === 'normal' ? 0 : Infinity);
+      b.prop = s.pk !== undefined ? (PROP_KINDS[s.pk] ?? null) : null;
       if (s.id !== this.playerId) {
         b.moveX = s.mx;
         b.moveY = s.my;
@@ -248,7 +273,7 @@ export class OnlineMatch implements Match {
     this.pending = this.pending.filter((p) => p.seq > ack);
     const corrected = { x, y };
     const scale = this.world.speedScale(this.me);
-    for (const p of this.pending) this.world.moveBody(corrected, p.mx, p.my, TICK, scale);
+    if (this.world.canMove(this.me)) for (const p of this.pending) this.world.moveBody(corrected, p.mx, p.my, TICK, scale);
     const error = Math.hypot(corrected.x - this.pred.x, corrected.y - this.pred.y);
     this.stats.snapshots++;
     if (error > 0.01) {

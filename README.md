@@ -1,6 +1,6 @@
 # Finger Guns
 
-A browser battle royale in the style of Brawl Stars Showdown, where every player is a hand firing finger guns. Matches have 12 hands, solo or in teams of 2, 3 or 4, online or against bots.
+A browser battle royale in the style of Brawl Stars Showdown, where every player is a hand firing finger guns. Matches have 12 hands, solo or in teams of 2, 3 or 4, online or against bots. There's also a prop hunt hide-and-seek game, where hiders disguise themselves as blocks.
 
 ## Run it
 
@@ -37,6 +37,14 @@ A single small instance handles many matches. Each match uses about 30 KB/s of b
 The arena is dressed for the time of year. Every American holiday has its own featured map in the days leading up to it (Valentine's Day, the 4th of July, Halloween, Thanksgiving, Christmas and the rest), and the rest of the year plays the season's map: Spring (round flowering bushes), Summer (tall grass), Fall or Winter. The menu shows today's featured map. Online, the server's date picks it (US Eastern), so everyone in a match sees the same one. In a vs-bots lobby, or as a private match host, the **Map** arrows pick any of the 21 maps; public matches always play the featured one. The look is only paint: the layout, bushes and walls play the same on every map.
 
 Dates and names are in `src/sim/themes.ts`; each map's colours, bushes, decorations and weather are in `src/render/themes.ts`. Screenshots of every map are in `docs/maps/`.
+
+## Prop hunt
+
+A second game, picked with **Game** in a vs-bots lobby or by a private match's host (public matches are always Showdown). One hand is the seeker and everyone else hides, disguised as something that already lies around the arena: a brick, a crate, a bush, a power cube or an ammo box (extra power cubes and ammo boxes are scattered around as decoys, and nothing can be picked up). With **Hiders' blocks** on **Pick one**, hiders tap a block at the bottom of the screen while they hide; on **Random** they're given one and have to find somewhere it blends in. A hider's trigger doesn't shoot: it swaps them to a different random block, and gives them away for a moment in a bush.
+
+The seeker starts asleep in the middle with a sleep mask over their screen for 60 seconds while everyone hides, then the mask lifts and they get 3 minutes to hunt. The map is dark, so the seeker's flashlight is the best way to look around, and bushes still hide anyone who isn't close. Shooting or touching a hider finds them. The last hider found wins the round (if time runs out, everyone still hidden wins it), and the first one found is the seeker next round. A match is 3 rounds; most rounds won takes it, with time spent hidden as the tie-breaker. Bots hide and seek too. Timings and decoy counts are in `PROP_HUNT` in `src/sim/config.ts`; screenshots are in `docs/prop-hunt/`.
+
+`npx tsx scripts/simulate.ts 5 prop` plays bot-only prop hunt matches headlessly, and with the server running `npx tsx scripts/prophuntcheck.ts` checks a private prop hunt match online.
 
 ## Kill rewards and customization
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { AMMO, AmmoKind, FINGERS, MAP_SIZE, SUPER } from '../sim/config';
+import { AMMO, AmmoKind, FINGERS, MAP_SIZE, PICKUP_AMMO_KINDS, PropKind, SUPER } from '../sim/config';
+import { PropHuntView, type PropModel } from './prophunt';
 import { Tile } from '../sim/map';
 import { type Brawler, type World, ammoOf, fingerCount } from '../sim/world';
 import { type PlayerLook, handSurfaceColor } from './cosmetics';
@@ -64,6 +65,7 @@ export class GameScene {
   private look: ThemeLook;
   private ambient: AmbientFall | null = null;
   private fireworkClock = 1;
+  private propHunt: PropHuntView | null = null;
 
   constructor(
     readonly renderer: THREE.WebGLRenderer,
@@ -74,14 +76,17 @@ export class GameScene {
     theme: MapTheme = 'summer',
   ) {
     const look = (this.look = THEME_LOOKS[theme]);
+    // Prop hunt is played at night, so the seeker's flashlight matters.
+    const night = world.mode === 'propHunt';
     this.scene.background = new THREE.Color(look.sky);
+    if (night) (this.scene.background as THREE.Color).lerp(new THREE.Color(0x04050c), 0.8);
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     this.camera.zoom = 1;
 
     const light = look.light ?? { sky: 0xdff1ff, ground: 0x6b5a7a, hemi: 1.4, sun: 2.2, sunColor: 0xffffff };
-    this.scene.add(new THREE.HemisphereLight(light.sky, light.ground, light.hemi));
-    this.sun = new THREE.DirectionalLight(light.sunColor, light.sun);
+    this.scene.add(new THREE.HemisphereLight(light.sky, light.ground, light.hemi * (night ? 0.1 : 1)));
+    this.sun = new THREE.DirectionalLight(night ? 0x8fa6ff : light.sunColor, light.sun * (night ? 0.06 : 1));
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     const s = 18;
@@ -112,6 +117,9 @@ export class GameScene {
       this.hands.set(b.id, hand);
       this.scene.add(hand.root);
     });
+    if (night) {
+      this.propHunt = new PropHuntView(this.scene, world, playerId, this.hands, this.particles, (kind, id) => this.makeProp(kind, id));
+    }
 
     const aimMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false });
     const lineGeo = new THREE.PlaneGeometry(1, 0.5);
@@ -199,7 +207,10 @@ export class GameScene {
     // Follow the player, then a teammate once they're out, then whoever is still fighting.
     const follow = player.alive
       ? player
-      : (w.brawlers.find((b) => b.alive && b.team === player.team) ?? w.brawlers.find((b) => b.alive) ?? player);
+      : (this.propHunt?.spectateTarget() ??
+        w.brawlers.find((b) => b.alive && b.team === player.team) ??
+        w.brawlers.find((b) => b.alive) ??
+        player);
     this.camTarget.lerp(new THREE.Vector3(follow.x, 0, follow.y), Math.min(1, dt * 6));
     this.placeCamera();
 
@@ -223,6 +234,7 @@ export class GameScene {
       }
       hand.update(dt, b.x, b.y, b.facing, moving, hidden);
     }
+    this.propHunt?.update();
 
     this.grassSway.uSwayTime.value = this.clockTime;
     this.syncBullets();
@@ -248,7 +260,8 @@ export class GameScene {
     this.bushFade.uFadeAmount.value += (target - this.bushFade.uFadeAmount.value) * Math.min(1, dt * 8);
 
     // Aim guides: a line as long as your bullets fly, a spray for a shotgun, a fan for the super.
-    const showAim = player.alive && aim.active;
+    // Prop hunt hiders' triggers change their block rather than shoot, so they get no aim guide.
+    const showAim = player.alive && aim.active && (!w.propHunt || w.isSeeker(player));
     const angle = Math.atan2(aim.y, aim.x);
     const ammo = ammoOf(player);
     const spray = ammo.pellets > 1;
@@ -296,6 +309,7 @@ export class GameScene {
 
   private handleEvents(player: Brawler) {
     for (const e of this.world.events) {
+      this.propHunt?.handleEvent(e);
       switch (e.type) {
         case 'shot': {
           this.hands.get(e.brawlerId)?.shoot(e.isSuper);
@@ -412,26 +426,91 @@ export class GameScene {
     for (let y = 0; y < map.size; y++) {
       for (let x = 0; x < map.size; x++) if (map.tiles[y * map.size + x] === Tile.Wall) cells.push([x, y]);
     }
-    const geo = new RoundedBoxGeometry(1, 1.2, 1, 2, 0.1);
-    geo.translate(0, 0.6, 0);
-    const mat = toon(0xffffff, { map: brickTexture() });
+    const geo = this.brickGeo;
+    const mat = toon(0xffffff, { map: this.brickTex });
     addFade(mat, this.wallFade);
     const walls = new THREE.InstancedMesh(geo, mat, cells.length);
-    const look = this.look;
-    const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.045, look.wallEdge ?? 0x141a45, this.wallFade), cells.length);
+    const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.045, this.look.wallEdge ?? 0x141a45, this.wallFade), cells.length);
     const col = new THREE.Color();
     cells.forEach(([x, y], i) => {
       this.dummy.position.set(x + 0.5, 0, y + 0.5);
       this.dummy.updateMatrix();
       walls.setMatrixAt(i, this.dummy.matrix);
       hull.setMatrixAt(i, this.dummy.matrix);
-      const n = look.walls.length;
-      const pick = look.wallPattern === 'checker' ? (x + y) % n : look.wallPattern === 'rows' ? (x + y) % (n * 2) >> 1 : (x * 7 + y * 13) % n;
-      walls.setColorAt(i, col.set(look.walls[pick]));
+      walls.setColorAt(i, col.set(this.wallColor(x, y)));
     });
     walls.castShadow = true;
     walls.receiveShadow = true;
     this.scene.add(walls, hull);
+  }
+
+  private brickGeo = new RoundedBoxGeometry(1, 1.2, 1, 2, 0.1).translate(0, 0.6, 0);
+  private brickTex = brickTexture();
+
+  /** The tint of the wall brick at a tile, by the theme's pattern. */
+  private wallColor(x: number, y: number): number {
+    const look = this.look;
+    const n = look.walls.length;
+    const pick = look.wallPattern === 'checker' ? (x + y) % n : look.wallPattern === 'rows' ? (x + y) % (n * 2) >> 1 : (x * 7 + y * 13) % n;
+    return look.walls[((pick % n) + n) % n];
+  }
+
+  /** A prop hunt disguise, made of the same parts as the real thing on this map. */
+  makeProp(kind: PropKind, brawlerId: number): PropModel {
+    switch (kind) {
+      case 'brick': {
+        const mat = toon(0xffffff, { map: this.brickTex });
+        const mesh = new THREE.Mesh(this.brickGeo, mat);
+        mesh.add(new THREE.Mesh(this.brickGeo, outlineMaterial(0.045, this.look.wallEdge ?? 0x141a45)));
+        mesh.castShadow = mesh.receiveShadow = true;
+        // Takes the colour the wall pattern would have where it stands.
+        return { obj: mesh, animate: (x, y) => mat.color.set(this.wallColor(Math.floor(x), Math.floor(y))) };
+      }
+      case 'crate': {
+        const mesh = this.makeCrate();
+        const gem = mesh.getObjectByName('gem')!;
+        return {
+          obj: mesh,
+          animate: () => {
+            gem.rotation.y = this.clockTime * 2;
+            gem.position.y = 1.05 + Math.sin(this.clockTime * 3) * 0.06;
+          },
+        };
+      }
+      case 'bush': {
+        const g = new THREE.Group();
+        const inner = new THREE.Group();
+        // Built as if on some tile in the middle of a patch, so the bush has a natural shape.
+        inner.position.set(-12.5, 0, -7.5);
+        this.buildBushCells([[12, 7]], inner);
+        g.add(inner);
+        return { obj: g };
+      }
+      case 'cube': {
+        const m = new THREE.Mesh(this.cubeGeo, this.cubeMat);
+        withOutline(m, 0.04);
+        m.castShadow = true;
+        // Bobs and spins just like the decoy cubes around it.
+        return {
+          obj: m,
+          animate: () => {
+            m.position.y = 0.45 + Math.sin(this.clockTime * 3 + brawlerId) * 0.1;
+            m.rotation.set(0.6, this.clockTime * 1.8 + brawlerId, 0.3);
+          },
+        };
+      }
+      case 'ammo': {
+        const g = this.makeAmmoBox(PICKUP_AMMO_KINDS[brawlerId % PICKUP_AMMO_KINDS.length]);
+        const box = g.getObjectByName('box')!;
+        return {
+          obj: g,
+          animate: () => {
+            box.position.y = 0.55 + Math.sin(this.clockTime * 3 + brawlerId) * 0.1;
+            box.rotation.set(0.35, this.clockTime * 1.5 + brawlerId, 0);
+          },
+        };
+      }
+    }
   }
 
   private buildBushes() {
@@ -440,10 +519,14 @@ export class GameScene {
     for (let y = 0; y < map.size; y++) {
       for (let x = 0; x < map.size; x++) if (map.tiles[y * map.size + x] === Tile.Bush) cells.push([x, y]);
     }
+    this.buildBushCells(cells, this.scene);
+  }
+
+  private buildBushCells(cells: [number, number][], parent: THREE.Object3D) {
     const kind = this.look.bush.kind;
-    if (kind === 'grass') this.buildGrass(cells);
-    else if (kind === 'round') this.buildRoundBushes(cells);
-    else this.buildPines(cells);
+    if (kind === 'grass') this.buildGrass(cells, parent);
+    else if (kind === 'round') this.buildRoundBushes(cells, parent);
+    else this.buildPines(cells, parent);
   }
 
   /** Per-instance shade of the theme's bush colour: a little hue drift and lighter tips. */
@@ -454,7 +537,7 @@ export class GameScene {
     return col.setHSL(hsl.h + (h - 0.5) * spread, hsl.s, hsl.l + h2 * 0.1);
   }
 
-  private buildGrass(cells: [number, number][]) {
+  private buildGrass(cells: [number, number][], parent: THREE.Object3D) {
     // Tall grass: clusters of tapered, leaning blades per bush tile. Darker and more
     // saturated than the lawn so the hiding spots stand out.
     const perTile = 9;
@@ -502,10 +585,10 @@ export class GameScene {
     }
     blades.castShadow = true;
     blades.frustumCulled = hull.frustumCulled = false; // swaying tips can leave the static bounds
-    this.scene.add(blades, hull);
+    parent.add(blades, hull);
   }
 
-  private buildRoundBushes(cells: [number, number][]) {
+  private buildRoundBushes(cells: [number, number][], parent: THREE.Object3D) {
     // Leafy balls, three to a tile, like the very first version of the arena.
     const perTile = 3;
     const radius = 0.42;
@@ -542,11 +625,11 @@ export class GameScene {
       }
     }
     bushes.castShadow = true;
-    this.scene.add(bushes, hull);
-    this.buildAccents(cells, spots, 3 * perTile);
+    parent.add(bushes, hull);
+    this.buildAccents(cells, spots, 3 * perTile, parent);
   }
 
-  private buildPines(cells: [number, number][]) {
+  private buildPines(cells: [number, number][], parent: THREE.Object3D) {
     // A little fir tree per tile: three stacked cones, white-tipped when it's snowy.
     const tiers: THREE.BufferGeometry[] = [];
     const tierShape = [
@@ -605,12 +688,12 @@ export class GameScene {
       }
     });
     trees.castShadow = true;
-    this.scene.add(trees, hull);
-    this.buildAccents(cells, spots, 8);
+    parent.add(trees, hull);
+    this.buildAccents(cells, spots, 8, parent);
   }
 
   /** Flowers, fairy lights, gold coins, eggs or pumpkins dotted on the bushes. */
-  private buildAccents(cells: [number, number][], spots: THREE.Vector3[], spotsPerTile: number) {
+  private buildAccents(cells: [number, number][], spots: THREE.Vector3[], spotsPerTile: number, parent: THREE.Object3D) {
     const acc = this.look.accents;
     if (!acc || spots.length === 0) return;
     const size = acc.size ?? 0.08;
@@ -635,14 +718,14 @@ export class GameScene {
       mesh.setMatrixAt(i, this.dummy.matrix);
       mesh.setColorAt(i, col.set(acc.colors[i % acc.colors.length]));
     });
-    this.scene.add(mesh);
+    parent.add(mesh);
     if (!acc.glow) {
       const hull = new THREE.InstancedMesh(geo, outlineMaterial(0.02, 0x1a1422, this.bushFade), picks.length);
       for (let i = 0; i < picks.length; i++) {
         mesh.getMatrixAt(i, this.dummy.matrix);
         hull.setMatrixAt(i, this.dummy.matrix);
       }
-      this.scene.add(hull);
+      parent.add(hull);
     }
   }
 
@@ -661,25 +744,33 @@ export class GameScene {
     this.particles.burst(x, y, z, 8, 0xffffff, { speed: 2, size: 0.1, life: 0.6, gravity: 1, up: 0.4 });
   }
 
+  private crateParts = {
+    geo: new RoundedBoxGeometry(0.86, 0.86, 0.86, 2, 0.08).translate(0, 0.43, 0),
+    mat: toon(0xc98a4b),
+    strapGeo: new THREE.BoxGeometry(0.9, 0.16, 0.9),
+    strapMat: toon(0x7a4a2a),
+    gemGeo: new THREE.OctahedronGeometry(0.14),
+    gemMat: new THREE.MeshBasicMaterial({ color: 0x6ef06a }),
+  };
+
+  private makeCrate(): THREE.Mesh {
+    const p = this.crateParts;
+    const mesh = new THREE.Mesh(p.geo, p.mat);
+    withOutline(mesh, 0.045);
+    mesh.castShadow = mesh.receiveShadow = true;
+    const strap = new THREE.Mesh(p.strapGeo, p.strapMat);
+    strap.position.y = 0.43;
+    mesh.add(strap);
+    const gem = new THREE.Mesh(p.gemGeo, p.gemMat);
+    gem.position.y = 1.05;
+    gem.name = 'gem';
+    mesh.add(gem);
+    return mesh;
+  }
+
   private buildCrates() {
-    const geo = new RoundedBoxGeometry(0.86, 0.86, 0.86, 2, 0.08);
-    geo.translate(0, 0.43, 0);
-    const mat = toon(0xc98a4b);
-    const strapGeo = new THREE.BoxGeometry(0.9, 0.16, 0.9);
-    const strapMat = toon(0x7a4a2a);
-    const gemGeo = new THREE.OctahedronGeometry(0.14);
-    const gemMat = new THREE.MeshBasicMaterial({ color: 0x6ef06a });
     for (const c of this.world.crates) {
-      const mesh = new THREE.Mesh(geo, mat);
-      withOutline(mesh, 0.045);
-      mesh.castShadow = mesh.receiveShadow = true;
-      const strap = new THREE.Mesh(strapGeo, strapMat);
-      strap.position.y = 0.43;
-      mesh.add(strap);
-      const gem = new THREE.Mesh(gemGeo, gemMat);
-      gem.position.y = 1.05;
-      gem.name = 'gem';
-      mesh.add(gem);
+      const mesh = this.makeCrate();
       mesh.position.set(c.x + 0.5, 0, c.y + 0.5);
       this.scene.add(mesh);
       this.crateMeshes.set(c.id, { mesh, shake: 0 });
@@ -827,6 +918,29 @@ export class GameScene {
   }
 
   private ammoBoxGeo = new RoundedBoxGeometry(0.56, 0.56, 0.56, 2, 0.08);
+
+  /** An ammo box group: the spinning box (named 'box') and the ring under it. */
+  private makeAmmoBox(kind: AmmoKind): THREE.Group {
+    const g = new THREE.Group();
+    let mat = this.ammoMats.get(kind);
+    if (!mat) {
+      mat = makeAmmoMaterial(kind);
+      this.ammoMats.set(kind, mat);
+    }
+    const box = new THREE.Mesh(this.ammoBoxGeo, mat);
+    withOutline(box, 0.04);
+    box.castShadow = true;
+    box.name = 'box';
+    g.add(box);
+    const ring = new THREE.Mesh(
+      this.ammoRingGeo,
+      new THREE.MeshBasicMaterial({ color: AMMO[kind].color, transparent: true, opacity: 0.85, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.04;
+    g.add(ring);
+    return g;
+  }
   private ammoRingGeo = new THREE.RingGeometry(0.4, 0.54, 28);
 
   /** Ammo boxes: a spinning box in the bullet type's colour with its picture on every face. */
@@ -836,24 +950,7 @@ export class GameScene {
       alive.add(p.id);
       let g = this.ammoMeshes.get(p.id);
       if (!g) {
-        g = new THREE.Group();
-        let mat = this.ammoMats.get(p.kind);
-        if (!mat) {
-          mat = makeAmmoMaterial(p.kind);
-          this.ammoMats.set(p.kind, mat);
-        }
-        const box = new THREE.Mesh(this.ammoBoxGeo, mat);
-        withOutline(box, 0.04);
-        box.castShadow = true;
-        box.name = 'box';
-        g.add(box);
-        const ring = new THREE.Mesh(
-          this.ammoRingGeo,
-          new THREE.MeshBasicMaterial({ color: AMMO[p.kind].color, transparent: true, opacity: 0.85, depthWrite: false }),
-        );
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.y = 0.04;
-        g.add(ring);
+        g = this.makeAmmoBox(p.kind);
         this.scene.add(g);
         this.ammoMeshes.set(p.id, g);
       }
